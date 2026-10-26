@@ -144,11 +144,22 @@ macOS 上换成系统 pnpm 即可：`pnpm install --registry=https://registry.np
 
 ```powershell
 cd .dsh\plugins\dsh-lan-bridge
-node test/smoke.mjs          # 11 项离线检查：zstd 帧解析、事件归一化、store、文件防护、清单差异、导出增量
+node test/smoke.mjs          # 12 项离线检查：zstd 帧解析、事件归一化、store、文件防护、清单差异、导出增量、分批切分
 node test/e2e.mjs            # 9 步：不依赖 DSH 启动宿主半，走完本地路由 + LAN 接口（含错误令牌）
 node test/two-machines.mjs   # 8 步：两个进程、两个 DSH_HOME，验证对话/记忆/清单/文件真正跨机
+node test/markdown.mjs       # 23 项：正文 Markdown 渲染（标题、围栏、行内、列表、表格、转义、链接白名单）
 ```
 
-三套测试全部使用临时目录，不碰真实 `$DSH_HOME`，也不占用 47820 端口（用随机高位端口）。
+四套测试全部使用临时目录，不碰真实 `$DSH_HOME`，也不占用 47820 端口（用随机高位端口）。
+`test/markdown.mjs` 不依赖浏览器：它从 `client.js` 里截出 markdown 段落，用桩 `C`/`h`/`useMemo` 在本机跑。
+
+### 打 macOS 更新包
+
+```powershell
+powershell -File scripts\build-macos-zip.ps1
+```
+
+产物是 `dist/dsh-lan-bridge-<version>-macos.zip`，内含 `install-macos.sh`、`更新说明.txt` 和完整插件目录。
+版本号取自 `package.json`，改了版本再跑一次即可。
 
 宿主半（`index.js` + `lib/`）是普通 ESM，可单独 `node --check`。浏览器半（`client.js`）是一个 `window.__ModuleLoader__.load` 工厂，用 `React.createElement`（无 JSX），通过 `ctx.slots` 注册侧边栏与主面板。

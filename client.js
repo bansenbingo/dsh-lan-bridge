@@ -226,6 +226,14 @@ window.__ModuleLoader__.load({
     function Fold(props) {
       const [open, setOpen] = useState(props.defaultOpen === true)
       const count = typeof props.chars === 'number' ? props.chars : 0
+      const forceOpen = props.forceOpen
+      const gen = typeof props.gen === 'number' ? props.gen : 0
+      useEffect(
+        function () {
+          if (typeof forceOpen === 'boolean') setOpen(forceOpen)
+        },
+        [gen]
+      )
       return h(
         'div',
         { style: { margin: '6px 0' } },
@@ -292,12 +300,298 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ------------------------------------------------------------ markdown
+
+    function escHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+    }
+
+    function css(obj) {
+      const parts = []
+      for (const key in obj) {
+        if (!Object.prototype.hasOwnProperty.call(obj, key)) continue
+        const value = typeof obj[key] === 'number' ? obj[key] + 'px' : obj[key]
+        parts.push(key.replace(/[A-Z]/g, function (mark) { return '-' + mark.toLowerCase() }) + ':' + value)
+      }
+      return parts.join(';')
+    }
+
+    const MD = {
+      p: { margin: '0 0 8px', lineHeight: 1.62 },
+      h: { fontWeight: 640, margin: '14px 0 6px', lineHeight: 1.4, color: C.text },
+      code: {
+        fontFamily: C.mono,
+        fontSize: 12,
+        background: C.layer2,
+        border: '1px solid ' + C.border,
+        borderRadius: 4,
+        padding: '0 4px'
+      },
+      pre: {
+        margin: '6px 0 10px',
+        padding: 10,
+        background: C.layer,
+        border: '1px solid ' + C.border,
+        borderRadius: 8,
+        overflow: 'auto',
+        fontFamily: C.mono,
+        fontSize: 11.5,
+        lineHeight: 1.5
+      },
+      quote: { margin: '6px 0 10px', padding: '2px 0 2px 10px', borderLeft: '3px solid ' + C.border, color: C.dim },
+      list: { margin: '0 0 8px', paddingLeft: 20 },
+      li: { margin: '2px 0', lineHeight: 1.6 },
+      hr: { border: 'none', borderTop: '1px solid ' + C.border, margin: '12px 0' },
+      link: { color: C.brand, textDecoration: 'none' },
+      table: { borderCollapse: 'collapse', margin: '6px 0 10px', fontSize: 12 },
+      cell: { border: '1px solid ' + C.border, padding: '4px 8px', textAlign: 'left', verticalAlign: 'top' },
+      headCell: { border: '1px solid ' + C.border, padding: '4px 8px', textAlign: 'left', fontWeight: 640, background: C.layer2 }
+    }
+
+    const MD_HEAD_SIZE = { 1: 19, 2: 17, 3: 15.5, 4: 14, 5: 13.5, 6: 13 }
+
+    /** Inline markdown: code spans, links, bold, italic, strikethrough. Input is escaped first. */
+    function inlineMd(raw) {
+      const text0 = String(raw == null ? '' : raw)
+      if (text0 === '') return ''
+      const held = []
+      const hold = function (html) {
+        held.push(html)
+        return '\u0000' + (held.length - 1) + '\u0000'
+      }
+      let text = escHtml(text0)
+
+      text = text.replace(/`([^`\n]+)`/g, function (match, code) {
+        return hold('<code style="' + css(MD.code) + '">' + code + '</code>')
+      })
+      text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, function (match, alt) {
+        return hold('<span style="' + css({ color: C.faint }) + '">[图片' + (alt ? ' ' + alt : '') + ']</span>')
+      })
+      text = text.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, function (match, label, href) {
+        if (!/^(https?:|mailto:)/i.test(href)) return label
+        return hold('<a href="' + href + '" target="_blank" rel="noreferrer" style="' + css(MD.link) + '">' + label + '</a>')
+      })
+      text = text.replace(/(^|[\s(])(https?:\/\/[^\s<)\]]+)/g, function (match, lead, href) {
+        return lead + hold('<a href="' + href + '" target="_blank" rel="noreferrer" style="' + css(MD.link) + '">' + href + '</a>')
+      })
+      text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      text = text.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      text = text.replace(/~~([^~]+)~~/g, '<span style="text-decoration:line-through">$1</span>')
+      text = text.replace(/\u0000(\d+)\u0000/g, function (match, index) {
+        return held[Number(index)] || ''
+      })
+      return text
+    }
+
+    function startsBlock(line) {
+      return (
+        /^\s{0,3}(`{3,}|~{3,})/.test(line) ||
+        /^\s{0,3}#{1,6}\s+/.test(line) ||
+        /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line) ||
+        /^\s{0,3}>/.test(line) ||
+        /^\s*([-*+]|\d{1,3}[.)])\s+/.test(line)
+      )
+    }
+
+    function splitRow(row) {
+      return row
+        .replace(/^\s*\|/, '')
+        .replace(/\|\s*$/, '')
+        .split('|')
+        .map(function (cell) {
+          return cell.trim()
+        })
+    }
+
+    /** Small markdown to HTML renderer: headings, fences, lists, quotes, tables, inline styles. */
+    function mdToHtml(source) {
+      const lines = String(source == null ? '' : source).replace(/\r\n?/g, '\n').split('\n')
+      const html = []
+      const blank = function (line) {
+        return /^\s*$/.test(line)
+      }
+      let index = 0
+      while (index < lines.length) {
+        const line = lines[index]
+        if (blank(line)) {
+          index += 1
+          continue
+        }
+
+        const fence = /^\s{0,3}(`{3,}|~{3,})\s*([\w+#.-]*)\s*$/.exec(line)
+        if (fence) {
+          const marker = fence[1]
+          const body = []
+          index += 1
+          while (index < lines.length && lines[index].trim().indexOf(marker) !== 0) {
+            body.push(lines[index])
+            index += 1
+          }
+          if (index < lines.length) index += 1
+          html.push('<pre style="' + css(MD.pre) + '"><code>' + escHtml(body.join('\n')) + '</code></pre>')
+          continue
+        }
+
+        const heading = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
+        if (heading) {
+          const level = heading[1].length
+          html.push(
+            '<div style="' + css(Object.assign({}, MD.h, { fontSize: MD_HEAD_SIZE[level] })) + '">' + inlineMd(heading[2]) + '</div>'
+          )
+          index += 1
+          continue
+        }
+
+        if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+          html.push('<hr style="' + css(MD.hr) + '">')
+          index += 1
+          continue
+        }
+
+        if (/^\s{0,3}>/.test(line)) {
+          const body = []
+          while (index < lines.length && /^\s{0,3}>/.test(lines[index])) {
+            body.push(lines[index].replace(/^\s{0,3}>\s?/, ''))
+            index += 1
+          }
+          html.push(
+            '<div style="' +
+              css(MD.quote) +
+              '">' +
+              body
+                .map(inlineMd)
+                .join('<br>') +
+              '</div>'
+          )
+          continue
+        }
+
+        if (
+          line.indexOf('|') >= 0 &&
+          index + 1 < lines.length &&
+          lines[index + 1].indexOf('-') >= 0 &&
+          /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[index + 1])
+        ) {
+          const head = splitRow(line)
+          index += 2
+          const rows = []
+          while (index < lines.length && lines[index].indexOf('|') >= 0 && !blank(lines[index])) {
+            rows.push(splitRow(lines[index]))
+            index += 1
+          }
+          html.push(
+            '<table style="' +
+              css(MD.table) +
+              '"><tbody><tr>' +
+              head
+                .map(function (cell) {
+                  return '<th style="' + css(MD.headCell) + '">' + inlineMd(cell) + '</th>'
+                })
+                .join('') +
+              '</tr>' +
+              rows
+                .map(function (row) {
+                  return (
+                    '<tr>' +
+                    row
+                      .map(function (cell) {
+                        return '<td style="' + css(MD.cell) + '">' + inlineMd(cell) + '</td>'
+                      })
+                      .join('') +
+                    '</tr>'
+                  )
+                })
+                .join('') +
+              '</tbody></table>'
+          )
+          continue
+        }
+
+        const bullet = /^\s*([-*+])\s+(.*)$/.exec(line)
+        const numbered = /^\s*\d{1,3}[.)]\s+(.*)$/.exec(line)
+        if (bullet || numbered) {
+          const ordered = bullet === null
+          const items = []
+          while (index < lines.length) {
+            const hit = ordered ? /^\s*\d{1,3}[.)]\s+(.*)$/.exec(lines[index]) : /^\s*[-*+]\s+(.*)$/.exec(lines[index])
+            if (!hit) {
+              if (items.length > 0 && /^\s{2,}\S/.test(lines[index]) && !startsBlock(lines[index])) {
+                items[items.length - 1] += '<br>' + inlineMd(lines[index].trim())
+                index += 1
+                continue
+              }
+              break
+            }
+            items.push(inlineMd(hit[1]))
+            index += 1
+          }
+          const tag = ordered ? 'ol' : 'ul'
+          html.push(
+            '<' +
+              tag +
+              ' style="' +
+              css(MD.list) +
+              '">' +
+              items
+                .map(function (entry) {
+                  return '<li style="' + css(MD.li) + '">' + entry + '</li>'
+                })
+                .join('') +
+              '</' +
+              tag +
+              '>'
+          )
+          continue
+        }
+
+        const para = [inlineMd(line)]
+        index += 1
+        while (index < lines.length && !blank(lines[index]) && !startsBlock(lines[index])) {
+          para.push(inlineMd(lines[index]))
+          index += 1
+        }
+        html.push('<div style="' + css(MD.p) + '">' + para.join('<br>') + '</div>')
+      }
+      return html.join('')
+    }
+
+    /** Renders markdown produced on the peer machine. */
+    function Md(props) {
+      const html = useMemo(
+        function () {
+          return mdToHtml(props.text)
+        },
+        [props.text]
+      )
+      return h('div', {
+        style: { lineHeight: 1.62, fontSize: 13, wordBreak: 'break-word' },
+        dangerouslySetInnerHTML: { __html: html }
+      })
+    }
+
     // ---------------------------------------------------------- transcript
 
     function Block(props) {
       const block = props.block
+      const think = props.think
       if (block.k === 'reasoning') {
-        return h(Fold, { title: '思考链', chars: block.text.length, tone: C.warn, color: C.warn, defaultOpen: false }, block.text)
+        return h(
+          Fold,
+          {
+            title: '思考链',
+            chars: block.text.length,
+            tone: C.warn,
+            color: C.warn,
+            defaultOpen: false,
+            forceOpen: think ? think.open : undefined,
+            gen: think ? think.gen : 0
+          },
+          block.text
+        )
       }
       if (block.k === 'tool-call') {
         return h(
@@ -314,19 +608,7 @@ window.__ModuleLoader__.load({
       if (block.k === 'image') {
         return h('div', { style: S.faint }, '[图片 ' + (block.note || '') + ']')
       }
-      return h(
-        'div',
-        {
-          style: {
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            lineHeight: 1.62,
-            margin: '4px 0',
-            fontSize: 13
-          }
-        },
-        block.text
-      )
+      return h('div', { style: { margin: '4px 0' } }, h(Md, { text: block.text }))
     }
 
     function TranscriptItem(props) {
@@ -375,7 +657,7 @@ window.__ModuleLoader__.load({
           { style: { margin: '8px 0 10px' } },
           h('div', { style: { fontSize: 11, color: C.dim, marginBottom: 2 } }, '助手'),
           (item.blocks || []).map(function (block, index) {
-            return h(Block, { key: 'b' + index, block })
+            return h(Block, { key: 'b' + index, block: block, think: think })
           })
         )
       }
@@ -408,6 +690,16 @@ window.__ModuleLoader__.load({
     function ConversationView(props) {
       const conversation = props.conversation
       const items = conversation.items || []
+      const [think, setThink] = useState({ open: false, gen: 0 })
+      const thinkCount = items.reduce(function (total, item) {
+        if (item.t !== 'assistant') return total
+        return (
+          total +
+          (item.blocks || []).filter(function (block) {
+            return block.k === 'reasoning'
+          }).length
+        )
+      }, 0)
       const wrap = useRef(null)
       useEffect(
         function () {
@@ -429,6 +721,35 @@ window.__ModuleLoader__.load({
             h('span', null, fmtTime(conversation.updatedAt)),
             h('span', null, items.length + ' 段'),
             conversation.cwd ? h('span', { style: { fontFamily: C.mono } }, conversation.cwd) : null
+          ),
+          h(
+            'div',
+            { style: { marginTop: 7, display: 'flex', gap: 8, alignItems: 'center' } },
+            h(
+              'button',
+              {
+                type: 'button',
+                disabled: thinkCount === 0,
+                onClick: function () {
+                  setThink(function (prev) {
+                    return { open: !prev.open, gen: prev.gen + 1 }
+                  })
+                },
+                style: Object.assign({}, S.btn, {
+                  padding: '2px 9px',
+                  fontSize: 11,
+                  opacity: thinkCount === 0 ? 0.45 : 1,
+                  cursor: thinkCount === 0 ? 'default' : 'pointer'
+                }),
+                title: '一键折叠或展开本次对话的全部思考链'
+              },
+              think.open ? '折叠全部思考' : '展开全部思考'
+            ),
+            h(
+              'span',
+              { style: S.faint },
+              thinkCount === 0 ? '本次对话没有思考内容' : thinkCount + ' 段思考链 · 正文按 Markdown 渲染'
+            )
           )
         ),
         h(
