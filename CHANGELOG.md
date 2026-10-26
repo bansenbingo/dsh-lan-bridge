@@ -1,5 +1,36 @@
 # 更新记录
 
+## 0.1.3 — 2026-10-26
+
+紧跟着 0.1.2 的一次修复 + 一个新功能：那个版本会让局域网面板整个渲染失败。
+
+### 修：局域网面板报「渲染失败」/ `think is not defined`
+
+- 症状：升级到 0.1.2 后打开侧边栏面板，只看到错误边界渲染出的「局域网面板渲染失败」和一串堆栈，首行是 `ReferenceError: think is not defined`，栈顶在 `TranscriptItem`，其下是 `Array.map`。
+- 原因：0.1.2 的「思考链一键折叠」在 `TranscriptItem` 里用了一个裸标识符 `think`，但这个函数自己不声明它 —— 状态定义在 `ConversationView`（`const [think, setThink] = useState({ open: false, gen: 0 })`），渲染 `TranscriptItem` 时忘了往下传。只有含助手正文的会话才会走到那条分支，所以不是每次打开面板都炸。
+- 修：`TranscriptItem` 改为 `const think = props.think`（原位置是早已没用的 `const children = props.children`），`ConversationView` 的 `items.map(...)` 补上 `think: think`。
+
+### 修：Markdown 排版错乱（行距贴在一起、字重失效、嵌套列表被拍平）
+
+- 症状：0.1.2 里同步过来的正文虽然认得出标题和列表，但整体「挤成一团」——行与行几乎叠着，标题跟正文一样粗。
+- 原因：`css()` 给所有数字值一律补 `px`。于是 `lineHeight: 1.62` 生成 `line-height: 1.62px`（行高只有 1.62 像素），`fontWeight: 640` 生成 `font-weight: 640px`（非法值，浏览器直接丢弃）。
+- 修：新增无单位属性白名单（`lineHeight`、`fontWeight`、`opacity`、`zIndex`、`flex`、`lineClamp` 等），只有真正的长度值才补 `px`。
+- 顺带修掉几处结构问题：更深的缩进现在是父 `<li>` 里的子列表（不再是并排的兄弟项）；表格横向滚动、识别 `:---:` / `---:` 对齐、紧跟段落的表格不再被段落吞掉；首个标题不再带 14px 上边距。
+
+### 新：把任意一条对话 Fork 到本机工作区
+
+- 面板右侧新增工具条：挑一个本机工作区 → 点「Fork」，把当前展开的这条对话（本机的，或别的电脑同步过来的）写成一份**能直接接着聊的 DSH 会话**。
+- 实现照 DSH 自己 `buildForkSeed` 的语义手写 v4 会话文件：`~/.dsh/sessions/<workspace-key>/session-<uuid>/session.v4.jsonl.zstd`，两段带 checksum 的 zstd 帧（header 帧 + 事件帧），事件按 `turn/start → step/start → user/message → session/title → assistant/message → step/end → turn/end` 排列，`seq` 从 0 稠密递增。
+- 写完顺带调 `workspaceRegistry.resolveByPath(cwd).attachSession(id)` 把它挂进目标工作区，所以正常情况下**不用重启 DSH**，刷新页面就能在侧栏看到；注册表不可用时退回「已写入，重启后可见」，文件本身已经写好。
+- 只搬对话内容（用户消息 + 助手正文），工具调用与思考链不搬：远程同步过来的本来就只有归一化后的条目，硬造 `tool/call` 会变成孤儿事件被结构校验拒掉。
+- 生成的文件在真机上用 DSH 自己的格式代码（`sessionFormatCatalog` 的 `readHeader` / `createRestore(...).decodeRow` / `finish`）校验通过：`status=current`、`storedVersion=4`、v4 关系校验无报错。
+
+### 其他
+
+- 测试扩到六套：smoke 12/12、e2e 10/10（新增 fork 步骤，覆盖 attach 成功与注册表不可用两种情况）、two-machines 8/8、markdown 34/34、render 14/14、fork 21/21。
+- `test/render.mjs`（14 项）不只盯 0.1.2 那个崩溃：现在喂固定 state 渲染「对话」页签，断言 fork 工具条的下拉框与按钮、以及已打开会话的正文都渲染出来。
+- `test/markdown.mjs` 从 23 项扩到 34 项，专盯 `line-height` / `font-weight` 的单位、嵌套列表结构、表格对齐与横向滚动。
+
 ## 0.1.2 — 2026-10-26
 
 ### 新：同步过来的正文按 Markdown 渲染

@@ -1,6 +1,6 @@
 {
   "name": "dsh-lan-bridge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Share conversations, memory, plugin lists and workspace files between two DSH machines on the same LAN.",
   "keywords": [

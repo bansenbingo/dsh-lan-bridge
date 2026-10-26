@@ -310,11 +310,34 @@ window.__ModuleLoader__.load({
         .replace(/"/g, '&quot;')
     }
 
+    /** 这些属性的数字值本来就无单位，加 px 会让浏览器整条声明作废（line-height:1.62px → 行挤出屏幕）。 */
+    const UNITLESS = {
+      lineHeight: 1,
+      fontWeight: 1,
+      opacity: 1,
+      zIndex: 1,
+      flex: 1,
+      flexGrow: 1,
+      flexShrink: 1,
+      order: 1,
+      zoom: 1,
+      lineClamp: 1,
+      WebkitLineClamp: 1,
+      aspectRatio: 1,
+      tabSize: 1,
+      columnCount: 1,
+      fillOpacity: 1,
+      strokeOpacity: 1,
+      strokeWidth: 1
+    }
+
     function css(obj) {
       const parts = []
       for (const key in obj) {
         if (!Object.prototype.hasOwnProperty.call(obj, key)) continue
-        const value = typeof obj[key] === 'number' ? obj[key] + 'px' : obj[key]
+        const raw = obj[key]
+        if (raw == null || raw === '') continue
+        const value = typeof raw === 'number' ? (UNITLESS[key] ? String(raw) : raw + 'px') : raw
         parts.push(key.replace(/[A-Z]/g, function (mark) { return '-' + mark.toLowerCase() }) + ':' + value)
       }
       return parts.join(';')
@@ -344,10 +367,12 @@ window.__ModuleLoader__.load({
       },
       quote: { margin: '6px 0 10px', padding: '2px 0 2px 10px', borderLeft: '3px solid ' + C.border, color: C.dim },
       list: { margin: '0 0 8px', paddingLeft: 20 },
+      listNest: { margin: '2px 0 2px', paddingLeft: 18 },
       li: { margin: '2px 0', lineHeight: 1.6 },
       hr: { border: 'none', borderTop: '1px solid ' + C.border, margin: '12px 0' },
       link: { color: C.brand, textDecoration: 'none' },
-      table: { borderCollapse: 'collapse', margin: '6px 0 10px', fontSize: 12 },
+      tableWrap: { margin: '6px 0 10px', maxWidth: '100%', overflowX: 'auto' },
+      table: { borderCollapse: 'collapse', fontSize: 12 },
       cell: { border: '1px solid ' + C.border, padding: '4px 8px', textAlign: 'left', verticalAlign: 'top' },
       headCell: { border: '1px solid ' + C.border, padding: '4px 8px', textAlign: 'left', fontWeight: 640, background: C.layer2 }
     }
@@ -407,6 +432,96 @@ window.__ModuleLoader__.load({
         })
     }
 
+    const LIST_ITEM = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/
+
+    function indentOf(space) {
+      return space.replace(/\t/g, '  ').length
+    }
+
+    /** A row followed by a | --- | delimiter line starts a table. */
+    function isTableStart(lines, at) {
+      if (at + 1 >= lines.length) return false
+      const next = lines[at + 1]
+      return lines[at].indexOf('|') >= 0 && next.indexOf('-') >= 0 && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(next)
+    }
+
+    function tableAlign(cell) {
+      const left = cell.charAt(0) === ':'
+      const right = cell.charAt(cell.length - 1) === ':'
+      if (left && right) return 'center'
+      if (right) return 'right'
+      return 'left'
+    }
+
+    /**
+     * Parses one list starting at lines[at]. Deeper indents become a real child list
+     * inside the previous item instead of being flattened into one flat <ul>.
+     */
+    function parseList(lines, at, depth) {
+      const first = LIST_ITEM.exec(lines[at])
+      const base = indentOf(first[1])
+      const ordered = /\d/.test(first[2])
+      const start = ordered ? parseInt(first[2], 10) : 1
+      const items = []
+      let index = at
+      while (index < lines.length) {
+        const line = lines[index]
+        if (/^\s*$/.test(line)) {
+          let look = index + 1
+          while (look < lines.length && /^\s*$/.test(lines[look])) look += 1
+          if (look >= lines.length) break
+          const after = LIST_ITEM.exec(lines[look])
+          if (!after || indentOf(after[1]) < base) break
+          index = look
+          continue
+        }
+        const hit = LIST_ITEM.exec(line)
+        if (!hit) {
+          if (items.length > 0 && /^\s{2,}\S/.test(line) && !startsBlock(line)) {
+            items[items.length - 1].html += '<br>' + inlineMd(line.trim())
+            index += 1
+            continue
+          }
+          break
+        }
+        const indent = indentOf(hit[1])
+        if (indent < base) break
+        if (indent > base) {
+          const child = parseList(lines, index, depth + 1)
+          if (child.next === index || items.length === 0) break
+          items[items.length - 1].children.push(child.html)
+          index = child.next
+          continue
+        }
+        if (/\d/.test(hit[2]) !== ordered) break
+        items.push({ html: inlineMd(hit[3]), children: [] })
+        index += 1
+      }
+      return { html: renderList(ordered, start, items, depth), next: index }
+    }
+
+    function renderList(ordered, start, items, depth) {
+      const tag = ordered ? 'ol' : 'ul'
+      const attrs = ordered && start !== 1 ? ' start="' + start + '"' : ''
+      const style = css(depth > 0 ? MD.listNest : MD.list)
+      return (
+        '<' +
+        tag +
+        attrs +
+        ' style="' +
+        style +
+        '">' +
+        items
+          .map(function (item) {
+            return '<li style="' + css(MD.li) + '">' + item.html + item.children.join('') + '</li>'
+          })
+          .join('') +
+        '</' +
+        tag +
+        '>'
+      )
+    }
+
     /** Small markdown to HTML renderer: headings, fences, lists, quotes, tables, inline styles. */
     function mdToHtml(source) {
       const lines = String(source == null ? '' : source).replace(/\r\n?/g, '\n').split('\n')
@@ -439,8 +554,14 @@ window.__ModuleLoader__.load({
         const heading = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
         if (heading) {
           const level = heading[1].length
+          // 首块不留上边距，否则每条消息开头都会空一大截
+          const margin = html.length === 0 ? '0 0 6px' : '14px 0 6px'
           html.push(
-            '<div style="' + css(Object.assign({}, MD.h, { fontSize: MD_HEAD_SIZE[level] })) + '">' + inlineMd(heading[2]) + '</div>'
+            '<div style="' +
+              css(Object.assign({}, MD.h, { margin: margin, fontSize: MD_HEAD_SIZE[level] })) +
+              '">' +
+              inlineMd(heading[2]) +
+              '</div>'
           )
           index += 1
           continue
@@ -470,87 +591,54 @@ window.__ModuleLoader__.load({
           continue
         }
 
-        if (
-          line.indexOf('|') >= 0 &&
-          index + 1 < lines.length &&
-          lines[index + 1].indexOf('-') >= 0 &&
-          /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[index + 1])
-        ) {
+        if (isTableStart(lines, index)) {
           const head = splitRow(line)
+          const aligns = splitRow(lines[index + 1]).map(tableAlign)
           index += 2
           const rows = []
           while (index < lines.length && lines[index].indexOf('|') >= 0 && !blank(lines[index])) {
             rows.push(splitRow(lines[index]))
             index += 1
           }
+          const cellStyle = function (at, extra) {
+            return css(Object.assign({}, extra, { textAlign: aligns[at] || 'left' }))
+          }
           html.push(
-            '<table style="' +
+            '<div style="' +
+              css(MD.tableWrap) +
+              '"><table style="' +
               css(MD.table) +
-              '"><tbody><tr>' +
+              '"><thead><tr>' +
               head
-                .map(function (cell) {
-                  return '<th style="' + css(MD.headCell) + '">' + inlineMd(cell) + '</th>'
+                .map(function (cell, at) {
+                  return '<th style="' + cellStyle(at, MD.headCell) + '">' + inlineMd(cell) + '</th>'
                 })
                 .join('') +
-              '</tr>' +
+              '</tr></thead><tbody>' +
               rows
                 .map(function (row) {
-                  return (
-                    '<tr>' +
-                    row
-                      .map(function (cell) {
-                        return '<td style="' + css(MD.cell) + '">' + inlineMd(cell) + '</td>'
-                      })
-                      .join('') +
-                    '</tr>'
-                  )
+                  const cells = []
+                  for (let at = 0; at < Math.max(head.length, row.length); at += 1) {
+                    cells.push('<td style="' + cellStyle(at, MD.cell) + '">' + inlineMd(row[at] == null ? '' : row[at]) + '</td>')
+                  }
+                  return '<tr>' + cells.join('') + '</tr>'
                 })
                 .join('') +
-              '</tbody></table>'
+              '</tbody></table></div>'
           )
           continue
         }
 
-        const bullet = /^\s*([-*+])\s+(.*)$/.exec(line)
-        const numbered = /^\s*\d{1,3}[.)]\s+(.*)$/.exec(line)
-        if (bullet || numbered) {
-          const ordered = bullet === null
-          const items = []
-          while (index < lines.length) {
-            const hit = ordered ? /^\s*\d{1,3}[.)]\s+(.*)$/.exec(lines[index]) : /^\s*[-*+]\s+(.*)$/.exec(lines[index])
-            if (!hit) {
-              if (items.length > 0 && /^\s{2,}\S/.test(lines[index]) && !startsBlock(lines[index])) {
-                items[items.length - 1] += '<br>' + inlineMd(lines[index].trim())
-                index += 1
-                continue
-              }
-              break
-            }
-            items.push(inlineMd(hit[1]))
-            index += 1
-          }
-          const tag = ordered ? 'ol' : 'ul'
-          html.push(
-            '<' +
-              tag +
-              ' style="' +
-              css(MD.list) +
-              '">' +
-              items
-                .map(function (entry) {
-                  return '<li style="' + css(MD.li) + '">' + entry + '</li>'
-                })
-                .join('') +
-              '</' +
-              tag +
-              '>'
-          )
+        if (LIST_ITEM.test(line)) {
+          const list = parseList(lines, index, 0)
+          html.push(list.html)
+          index = list.next
           continue
         }
 
         const para = [inlineMd(line)]
         index += 1
-        while (index < lines.length && !blank(lines[index]) && !startsBlock(lines[index])) {
+        while (index < lines.length && !blank(lines[index]) && !startsBlock(lines[index]) && !isTableStart(lines, index)) {
           para.push(inlineMd(lines[index]))
           index += 1
         }
@@ -613,7 +701,7 @@ window.__ModuleLoader__.load({
 
     function TranscriptItem(props) {
       const item = props.item
-      const children = props.children
+      const think = props.think
       if (item.t === 'turn') {
         return h(
           'div',
@@ -756,7 +844,7 @@ window.__ModuleLoader__.load({
           'div',
           { ref: wrap, style: Object.assign({}, S.scroll, { flex: 1, padding: '4px 18px 40px' }) },
           items.length === 0 ? h('div', { style: S.muted }, '这条会话还没有可显示的内容。') : items.map(function (item, index) {
-            return h(TranscriptItem, { key: 'i' + index, item })
+            return h(TranscriptItem, { key: 'i' + index, item: item, think: think })
           })
         )
       )
@@ -774,6 +862,11 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(null)
       const [conversation, setConversation] = useState(null)
       const [convError, setConvError] = useState('')
+      const [workspaces, setWorkspaces] = useState([])
+      const [target, setTarget] = useState('')
+      const [forking, setForking] = useState(false)
+      const [forkNote, setForkNote] = useState('')
+      const [forkError, setForkError] = useState('')
 
       const load = useCallback(function () {
         setLoading(true)
@@ -804,12 +897,57 @@ window.__ModuleLoader__.load({
         setOpen(row)
         setConversation(null)
         setConvError('')
+        setForkNote('')
+        setForkError('')
         api('/conversation?machine=' + encodeURIComponent(row.machineId) + '&id=' + encodeURIComponent(row.sessionId))
           .then(function (body) {
             setConversation(body.conversation)
           })
           .catch(function (err) {
             setConvError(String(err.message || err))
+          })
+      }
+
+      useEffect(
+        function () {
+          api('/workspaces')
+            .then(function (body) {
+              const list = body.workspaces || []
+              setWorkspaces(list)
+              setTarget(function (previous) {
+                if (previous && list.some(function (row) { return row.key === previous })) return previous
+                return list.length > 0 ? list[0].key : ''
+              })
+            })
+            .catch(function () {
+              setWorkspaces([])
+            })
+        },
+        [props.tick]
+      )
+
+      const doFork = function () {
+        if (!open || !conversation) return
+        setForking(true)
+        setForkNote('')
+        setForkError('')
+        api('/fork', { method: 'POST', body: { machine: open.machineId, id: open.sessionId, workspace: target } })
+          .then(function (body) {
+            const result = (body && body.fork) || {}
+            const rounds = String(result.turns || 0)
+            const name = result.title || ''
+            setForkNote(
+              result.attached
+                ? '已挂进工作区 ' + (result.cwd || '') + '（' + rounds + ' 轮）。刷新一下页面，侧栏里就能看到「' + name + '」。'
+                : '已写入 ' + (result.cwd || '') + '（' + rounds + ' 轮）。重启 DSH 后侧栏里就能看到「' + name + '」，点开继续聊。'
+            )
+
+          })
+          .catch(function (err) {
+            setForkError(String(err.message || err))
+          })
+          .finally(function () {
+            setForking(false)
           })
       }
 
@@ -909,11 +1047,55 @@ window.__ModuleLoader__.load({
           )
         ),
         open
-          ? convError
-            ? h('div', { style: { padding: 16 } }, h('div', { style: S.err }, convError))
-            : conversation
-              ? h(ConversationView, { conversation })
-              : h('div', { style: { padding: 16, color: C.dim } }, '读取中…')
+          ? h(
+              'div',
+              { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 } },
+              h(
+                'div',
+                {
+                  style: {
+                    padding: '8px 12px',
+                    borderBottom: '1px solid ' + C.border,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    flexWrap: 'wrap'
+                  }
+                },
+                h('span', { style: { fontSize: 11.5, color: C.dim } }, 'Fork 到本机工作区'),
+                h(
+                  'select',
+                  {
+                    style: Object.assign({}, S.input, { width: 260, marginBottom: 0 }),
+                    value: target,
+                    onChange: function (event) {
+                      setTarget(event.target.value)
+                    }
+                  },
+                  workspaces.length === 0
+                    ? h('option', { value: '' }, '本机没有可用工作区')
+                    : workspaces.map(function (row) {
+                        return h(
+                          'option',
+                          { key: row.key, value: row.key },
+                          row.cwd + ' · ' + String(row.sessions) + ' 条会话'
+                        )
+                      })
+                ),
+                h(
+                  Btn,
+                  { primary: true, disabled: forking || !conversation || !target, onClick: doFork },
+                  forking ? '写入中…' : 'Fork'
+                ),
+                forkNote ? h('span', { style: S.ok }, forkNote) : null,
+                forkError ? h('span', { style: S.err }, forkError) : null
+              ),
+              convError
+                ? h('div', { style: { padding: 16 } }, h('div', { style: S.err }, convError))
+                : conversation
+                  ? h(ConversationView, { conversation })
+                  : h('div', { style: { padding: 16, color: C.dim } }, '读取中…')
+            )
           : h(
               'div',
               { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 30 } },

@@ -91,9 +91,27 @@ await config.update({
 
 const cleanups = []
 let localHandler = null
+const attachedSessions = []
+let registryMode = 'ok'
 const fakeCtx = {
-  get() {
-    return null
+  get(name) {
+    if (name !== 'workspaceRegistry') return null
+    if (registryMode === 'throw') {
+      return {
+        resolveByPath() {
+          throw new Error('no such workspace')
+        }
+      }
+    }
+    return {
+      async resolveByPath(target) {
+        return {
+          async attachSession(id) {
+            attachedSessions.push({ path: target, id })
+          }
+        }
+      }
+    }
   },
   on() {
     return function () {}
@@ -191,7 +209,49 @@ try {
     assert.equal(toolResult.text, '192.168.1.23')
   })
 
+  await step('fork: write a runnable session into a local workspace', async function () {
+    const forkModule = await import('../lib/fork.js')
+    const spaces = await get('/workspaces')
+    assert.equal(spaces.ok, true)
+    assert.ok(spaces.workspaces.length >= 1, 'workspace list should not be empty')
+    assert.ok(
+      spaces.workspaces.every(function (row) { return typeof row.key === 'string' && typeof row.cwd === 'string' }),
+      '每个工作区都要有 key 与 cwd'
+    )
+    const list = await get('/conversations')
+    const row = list.conversations.find(function (item) { return item.sessionId === sessionId })
+    const body = await post('/fork', { machine: row.machineId, id: sessionId })
+    assert.equal(body.ok, true)
+    assert.ok(body.fork.sessionId.startsWith('session-'), 'fork 应该是一条新会话')
+    assert.equal(body.fork.cwd, tempHome)
+    assert.equal(body.fork.turns, 1)
+    const bytes = await fs.readFile(body.fork.file)
+    const first = forkModule.frameEnd(bytes, 0)
+    const second = forkModule.frameEnd(bytes, first)
+    assert.ok(first > 0, 'header 帧应成帧')
+    assert.equal(second, bytes.length, '正文应正好是一个帧')
+    const newHeader = JSON.parse(zlib.zstdDecompressSync(bytes.subarray(0, first)).toString('utf8').trim())
+    assert.equal(newHeader.version, 4)
+    assert.equal(newHeader.cwd, tempHome)
+    assert.equal(newHeader.isSeeded, false)
+    const after = await get('/workspaces')
+    const created = after.workspaces.filter(function (item) { return item.key === forkModule.projectKey(tempHome) })
+    assert.equal(created.length, 1, 'fork 应该落在按 cwd 编码出来的工作区目录')
+    assert.equal(created[0].sessions, 1)
+    const missing = await post('/fork', { machine: row.machineId, id: 'session-nope' })
+    assert.equal(missing.ok, false)
+    assert.equal(missing.error.code, 'NOT_FOUND')
+    assert.equal(body.fork.attached, true, '拿到工作区注册表时应当挂进工作区')
+    assert.deepEqual(attachedSessions, [{ path: tempHome, id: body.fork.sessionId }])
+    registryMode = 'throw'
+    const noAttach = await post('/fork', { machine: row.machineId, id: sessionId })
+    registryMode = 'ok'
+    assert.equal(noAttach.ok, true, '注册表不可用不应导致 fork 失败')
+    assert.equal(noAttach.fork.attached, false)
+  })
+
   await step('files: roots, list, write, read back', async function () {
+
     const extra = path.join(tempHome, 'shared-dir')
     await fs.mkdir(extra, { recursive: true })
     await fs.writeFile(path.join(extra, 'note.txt'), 'first', 'utf8')

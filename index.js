@@ -15,6 +15,7 @@
 
 import path from 'node:path'
 import * as config from './lib/config.js'
+import * as fork from './lib/fork.js'
 import * as store from './lib/store.js'
 import * as auditless from './lib/http.js'
 import { createMesh } from './lib/mesh.js'
@@ -26,6 +27,23 @@ export const inject = ['webServer']
 
 const PREFIX = '/_dsh/lan'
 const EXPORT_DEBOUNCE_MS = 900
+
+/**
+ * 尽量把新会话挂进 cwd 对应的工作区，侧栏里就不会落进「未分组」。
+ * DSH 没暴露工作区注册表时安静地返回 false —— 文件已经写好，下次扫描照样看得到。
+ */
+async function attachToWorkspace(ctx, cwd, sessionId) {
+  try {
+    const registry = ctx && typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : null
+    if (!registry || typeof registry.resolveByPath !== 'function') return false
+    const entity = await registry.resolveByPath(cwd)
+    if (!entity || typeof entity.attachSession !== 'function') return false
+    await entity.attachSession(sessionId)
+    return true
+  } catch (err) {
+    return false
+  }
+}
 
 export function apply(ctx) {
   /** Open SSE responses; the renderer registers one per tab. */
@@ -396,6 +414,33 @@ export function apply(ctx) {
       return
     }
     json(res, 200, { ok: true, conversation: body })
+  }
+
+  // 本机有哪些工作区可以接收 fork：来自 ~/.dsh/sessions 下真实存在的项目目录。
+  table['GET ' + PREFIX + '/workspaces'] = async function (req, res) {
+    json(res, 200, {
+      ok: true,
+      workspaces: fork.listWorkspaces().map(function (row) {
+        return { key: row.key, cwd: row.cwd, sessions: row.sessions, updatedAt: row.updatedAt }
+      })
+    })
+  }
+
+  // 把共享区里任意一条会话 fork 成本机某工作区的一条新会话，之后可以直接接着聊。
+  table['POST ' + PREFIX + '/fork'] = async function (req, res) {
+    const body = await auditless.readJson(req, 256 * 1024)
+    const conversation = await store.getConversation(body && body.machine, body && body.id)
+    if (!conversation) {
+      json(res, 404, { ok: false, error: { code: 'NOT_FOUND', message: 'no such conversation in the shared store' } })
+      return
+    }
+    const result = fork.forkConversation({ conversation, workspace: body && body.workspace })
+    // 有工作区注册表就顺手把它挂进目标工作区（侧栏里就不会落进「未分组」）；
+    // 拿不到注册表也没关系，文件已经写好，DSH 下次扫描会话目录同样能看到。
+    result.attached = await attachToWorkspace(ctx, result.cwd, result.sessionId)
+    await store.audit({ kind: 'conversation-fork', from: String((body && body.id) || ''), to: result.sessionId, cwd: result.cwd })
+    broadcast({ type: 'conversations', at: Date.now() })
+    json(res, 200, { ok: true, fork: result })
   }
 
   table['GET ' + PREFIX + '/memory'] = async function (req, res) {

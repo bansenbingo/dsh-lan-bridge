@@ -83,6 +83,31 @@ check('hr', mdToHtml('---').indexOf('<hr') >= 0)
 const table = mdToHtml('| a | b |\n| --- | --- |\n| 1 | 2 |')
 check('table head', table.indexOf('<th') >= 0, table)
 check('table cell', table.indexOf('<td') >= 0 && table.indexOf('>1<') >= 0, table)
+check('table is scroll-wrapped', table.indexOf('overflow-x:auto') >= 0, table)
+check(
+  'table alignment from the delimiter row',
+  mdToHtml('| a | b | c |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |').indexOf('text-align:center') >= 0 &&
+    mdToHtml('| a | b |\n| :--- | ---: |\n| 1 | 2 |').indexOf('text-align:right') >= 0
+)
+check(
+  'table right after a paragraph is not swallowed by it',
+  mdToHtml('说明：\n| a | b |\n| --- | --- |\n| 1 | 2 |').indexOf('<table') >= 0
+)
+
+// unit handling: line-height / font-weight must stay unitless, otherwise every line collapses
+const body = mdToHtml('普通一段')
+check('line-height stays unitless', body.indexOf('line-height:1.62px') < 0 && body.indexOf('line-height:1.62') >= 0, body)
+check('font-weight stays unitless', mdToHtml('## 标题').indexOf('font-weight:640px') < 0)
+check('pixel values still get px', mdToHtml('普通一段').indexOf('font-size:13px') >= 0 || mdToHtml('普通一段').indexOf('margin:0 0 8px') >= 0)
+
+// nested lists
+const nested = mdToHtml('- 一\n  - 一甲\n  - 一乙\n- 二')
+check('nested list gets its own <ul>', (nested.match(/<ul/g) || []).length === 2, nested)
+check('nested list stays inside the parent <li>', /<li[^>]*>一<ul/.test(nested), nested)
+const orderedNested = mdToHtml('1. 甲\n   1. 甲一\n2. 乙')
+check('nested ordered list', (orderedNested.match(/<ol/g) || []).length === 2, orderedNested)
+check('ordered list keeps its start number', mdToHtml('3. 丙\n4. 丁').indexOf('start="3"') >= 0)
+check('first heading has no top margin', mdToHtml('## 标题').indexOf('margin:0 0 6px') >= 0)
 
 // escaping of raw html
 const evil = mdToHtml('<script>alert(1)</script>')

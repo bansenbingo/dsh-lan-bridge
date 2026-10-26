@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# dsh-lan-bridge 0.1.2 — macOS 更新脚本
+# dsh-lan-bridge 0.1.3 — macOS 更新脚本
 #
-#   1. unzip -o dsh-lan-bridge-0.1.2-macos.zip -d ~/Downloads/lan-bridge
+#   1. unzip -o dsh-lan-bridge-0.1.3-macos.zip -d ~/Downloads/lan-bridge
 #   2. bash ~/Downloads/lan-bridge/install-macos.sh
 #   3. 完全退出 DSH 再重新打开（不是刷新页面）
 #
@@ -43,7 +43,7 @@ fi
 # 2. 覆盖文件
 mkdir -p "$DEST"
 cp -R "$SRC/." "$DEST/"
-say "文件已更新到 0.1.2"
+say "文件已更新到 0.1.3"
 
 # 3. 校验
 if command -v node >/dev/null 2>&1; then
