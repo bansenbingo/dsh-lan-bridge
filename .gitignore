@@ -1,0 +1,8 @@
+# 依赖与构建产物
+node_modules/
+*.log
+*.tmp
+
+# 本地运行时状态（真机同步产生的，不进仓库）
+cache/
+store/

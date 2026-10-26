@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# 安装脚本必须在 macOS/Linux 上保持 LF
+*.sh text eol=lf
+
+# Windows 批处理必须 CRLF，否则 cmd 可能解析出错
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制产物
+*.zip binary
+*.png binary
+*.jpg binary

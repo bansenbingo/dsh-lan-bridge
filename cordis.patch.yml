@@ -1,0 +1,5 @@
+# Adds the LAN bridge surfaces: one entry in the sidebar rail (opens the
+# sharing panel) and its host half, which owns the LAN API and the sync loops.
+- insert:
+    - id: lan-bridge
+      name: 'dsh-lan-bridge'
