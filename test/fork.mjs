@@ -302,29 +302,48 @@ check('forkConversation 端到端写出一个新会话', function () {
 })
 
 check('forkConversation 拒绝没有内容的会话', function () {
-  let threw = false
+  let code = ''
+  let message = ''
   try {
     fork.forkConversation({ conversation: { items: [] } })
   } catch (err) {
-    threw = /没有可 fork 的内容/.test(String(err && err.message))
+    code = String((err && err.code) || '')
+    message = String((err && err.message) || err)
   }
-  if (!threw) throw new Error('空会话没有报错')
+  if (!/没有可 fork 的内容/.test(message)) throw new Error('空会话没有报错：' + message)
+  eq(code, 'EMPTY_CONVERSATION', '空会话的错误代号')
 })
 
 check('forkConversation 在没有工作区时给出可读错误', function () {
   const empty = mkdtempSync(join(tmpdir(), 'lan-fork-empty-'))
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = empty
+  let code = ''
   let message = ''
   try {
     fork.forkConversation({ conversation: transcript })
   } catch (err) {
+    code = String((err && err.code) || '')
     message = String((err && err.message) || err)
   } finally {
     process.env.DSH_HOME = previous
     rmSync(empty, { recursive: true, force: true })
   }
   if (message.indexOf('还没有任何工作区') < 0) throw new Error('错误信息不对：' + message)
+  eq(code, 'NO_WORKSPACE', '没有工作区时的错误代号')
+})
+
+check('forkConversation 不会悄悄落到别的工作区', function () {
+  let code = ''
+  let message = ''
+  try {
+    fork.forkConversation({ conversation: transcript, workspace: '--D-GitHub-已经被删掉了--' })
+  } catch (err) {
+    code = String((err && err.code) || '')
+    message = String((err && err.message) || err)
+  }
+  eq(code, 'NO_WORKSPACE', '指定了不存在的工作区时的错误代号')
+  if (message.indexOf('目标工作区') < 0) throw new Error('错误信息不对：' + message)
 })
 
 rmSync(home, { recursive: true, force: true })

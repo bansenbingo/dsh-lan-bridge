@@ -241,6 +241,9 @@ try {
     const missing = await post('/fork', { machine: row.machineId, id: 'session-nope' })
     assert.equal(missing.ok, false)
     assert.equal(missing.error.code, 'NOT_FOUND')
+    const badTarget = await post('/fork', { machine: row.machineId, id: sessionId, workspace: '--D-gone--' })
+    assert.equal(badTarget.ok, false, '不存在的工作区应当直接拒绝，不能悄悄落到别的工作区')
+    assert.equal(badTarget.error.code, 'NO_WORKSPACE')
     assert.equal(body.fork.attached, true, '拿到工作区注册表时应当挂进工作区')
     assert.deepEqual(attachedSessions, [{ path: tempHome, id: body.fork.sessionId }])
     registryMode = 'throw'

@@ -952,6 +952,8 @@ window.__ModuleLoader__.load({
       }
 
       const machines = (status && status.machines) || []
+      // 对端可能只留下一条空会话（没有一条 user/assistant 消息），那种 fork 不出来。
+      const emptyConversation = Boolean(conversation) && (!Array.isArray(conversation.items) || conversation.items.length === 0)
 
       return h(
         'div',
@@ -1084,9 +1086,12 @@ window.__ModuleLoader__.load({
                 ),
                 h(
                   Btn,
-                  { primary: true, disabled: forking || !conversation || !target, onClick: doFork },
+                  { primary: true, disabled: forking || emptyConversation || !conversation || !target, onClick: doFork },
                   forking ? '写入中…' : 'Fork'
                 ),
+                emptyConversation
+                  ? h('span', { style: { fontSize: 11.5, color: C.dim } }, '这条会话是空的，没有可 fork 的内容')
+                  : null,
                 forkNote ? h('span', { style: S.ok }, forkNote) : null,
                 forkError ? h('span', { style: S.err }, forkError) : null
               ),

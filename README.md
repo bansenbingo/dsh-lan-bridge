@@ -135,6 +135,7 @@ macOS 上换成系统 pnpm 即可：`pnpm install --registry=https://registry.np
 | 面板显示「渲染失败」 | 先看堆栈：如果是 `think is not defined`，那是 0.1.2 的已知缺陷，升到 0.1.3 后**重开 DSH**；否则多半是插件客户端包版本变了而页面还是旧的，`Ctrl+F5` 硬刷新整个窗口 |
 | 对话里没有新内容 | 点「立即同步」；或把拉取间隔调小；确认对方会话确实产生过事件 |
 | Fork 之后侧栏没出现 | 先 `Ctrl+F5` 刷新页面；仍没有就重开 DSH。提示是「已写入」而不是「已挂进」时，说明没挂进工作区，会话在侧栏「未分组」里 |
+| Fork 提示「这条会话没有可 fork 的内容」/「目标工作区不存在了」 | 前者说明对端那条会话是空壳（只有 header），换一条有内容的；后者是下拉里选的工作区已被删掉，刷新页面重挑一个 |
 | 插件页「应用清单」后没生效 | 必须再点「运行 pnpm install」，然后重开 DSH |
 
 ---
@@ -160,7 +161,7 @@ node test/e2e.mjs            # 10 步：不依赖 DSH 启动宿主半，走完�
 node test/two-machines.mjs   # 8 步：两个进程、两个 DSH_HOME，验证对话/记忆/清单/文件真正跨机
 node test/markdown.mjs       # 34 项：正文 Markdown 渲染（标题、围栏、行内、列表与嵌套、表格与对齐、单位、转义、链接白名单）
 node test/render.mjs         # 14 项：渲染整条会话与「对话」页签，断言思考链折叠状态真的传到子组件、fork 工具条真的渲染出来（可传参指定别的 client.js）
-node test/fork.mjs           # 21 项：fork 文件生成（路径编码、事件序列与配对、双帧 zstd、header 形状、wx 写法、读回、错误分支）
+node test/fork.mjs           # 22 项：fork 文件生成（路径编码、事件序列与配对、双帧 zstd、header 形状、wx 写法、读回、错误分支、工作区不回退）
 ```
 
 六套测试全部使用临时目录，不碰真实 `$DSH_HOME`，也不占用 47820 端口（用随机高位端口）。

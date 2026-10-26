@@ -434,7 +434,16 @@ export function apply(ctx) {
       json(res, 404, { ok: false, error: { code: 'NOT_FOUND', message: 'no such conversation in the shared store' } })
       return
     }
-    const result = fork.forkConversation({ conversation, workspace: body && body.workspace })
+    let result = null
+    try {
+      result = fork.forkConversation({ conversation, workspace: body && body.workspace })
+    } catch (err) {
+      // 可预期的分支（会话是空的、目标工作区没了）回 400，把中文原因原样给面板；
+      // 其它异常继续走外面的兜底 500，方便排查。
+      if (!err || typeof err.code !== 'string') throw err
+      json(res, 400, { ok: false, error: { code: err.code, message: String(err.message || err.code) } })
+      return
+    }
     // 有工作区注册表就顺手把它挂进目标工作区（侧栏里就不会落进「未分组」）；
     // 拿不到注册表也没关系，文件已经写好，DSH 下次扫描会话目录同样能看到。
     result.attached = await attachToWorkspace(ctx, result.cwd, result.sessionId)
