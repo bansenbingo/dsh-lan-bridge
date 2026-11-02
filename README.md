@@ -1,8 +1,8 @@
-# dsh-lan-bridge
+# dsh-lan-bridge 0.2
 
-把同一局域网里的两台 DSH（Windows + macOS）连成一个小平台：**共享对话、共享记忆、一键同步插件清单、远程查看和修改工作区文件**。
+把同一个局域网里的多台 DSH 连成**去中心化协作网**：每台电脑都是一个节点，不需要主机；可以互相浏览工作区、像 AirDrop 一样传文件、把另一台电脑的 AI 对话 fork 到本机原生会话里继续聊，也可以借用另一台电脑的模型做多机并行推理。
 
-面板打开方式：侧边栏「局域网」图标 → 主面板，五个标签页：对话 / 插件 / 文件 / 记忆 / 设置。
+面板打开方式：侧边栏「局域网」图标 → 主面板。所有跨机请求都由本机宿主半代理，浏览器不会直接连接另一台电脑。
 
 ---
 
@@ -10,45 +10,69 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 共享对话 | 任意一台电脑上的提问与回答都会进入共享区，另一台的「对话」页可以完整看到**思维链、每一次工具调用与返回、最终输出**，顺序与原会话一致 |
-| 共享记忆 | 把本机找到的 `MEMORY.md` / `USER.md` 同步到共享区；对端的版本可以一键覆盖本机（覆盖前自动备份） |
-| 插件清单 | 读取本机 profile 的插件依赖与 bundle 列表；对端清单到达后可「一键应用」，再一键跑 `pnpm install` |
-| 文件 | 浏览、编辑、删除、重命名工作区文件——本机或对端都行；写入走「临时文件 + 替换」，旧内容备份到 `$DSH_HOME/lan-bridge/backups/`（不污染被共享的目录） |
-| 同步计划 | 实时（默认）/ 手动两档；推送与拉取间隔可调 |
+| 多工作区浏览 | 本机 DSH 工作区自动出现在列表；也可以手动添加任意目录。对已信任设备，可以浏览、读取、下载其共享工作区 |
+| AirDrop 式传文件 | 选择文件 → 选择目标设备 → 对方收件箱或工作区；分块传输、逐块 SHA-256、整文件 SHA-256、断点续传、接收确认、2 GiB 上限 |
+| 远程 AI 对话 | 列出另一台电脑上的会话，预览用户/助手内容，一键 fork 成本机真实 DSH session，再用 `uiWorkspace.openSession` 在原生对话界面打开 |
+| 多机多模型协作 | 把同一个问题并行发给多台设备，每台用它自己的模型回答；结果回收到本机面板或本机 AI 工具里 |
+| 去中心化 | 每台机器同时运行 HTTP + UDP 发现 + 同步，没有 hub/peer 角色；任意两台已信任设备直接同步 |
+| 跨平台 | Windows / macOS / Linux 共用 Node 路径处理；没有平台专属运行时依赖 |
+| 原生 UI | 面板注册在 DSH 原生 `sidebar.panellist` / `main` slot，颜色和圆角使用 `--dsw-*` 主题变量；远程对话最终在 DSH 原生会话中打开，而不是第二套聊天界面 |
+| 自动同步 | 会话、`MEMORY.md` / `USER.md`、插件清单在已信任设备间做 anti-entropy 收敛 |
 
-一句话：**在两台电脑之间搬「上下文」，而不是搬「屏幕」。**
+一句话：**搬的是上下文、文件和算力，不是屏幕。**
 
 ---
 
 ## 二、架构
 
 ```
-        Windows (hub 主机)                        macOS (peer 成员)
-  ┌──────────────────────────┐            ┌──────────────────────────┐
-  │ DSH + dsh-lan-bridge     │            │ DSH + dsh-lan-bridge     │
-  │  · 扫描本机会话 → 共享区  │            │  · 扫描本机会话 → 共享区  │
-  │  · HTTP :47820 (带令牌)  │◀──令牌────▶│  · 定时 push / pull      │
-  │  · UDP :47821 广播发现   │            │  · 浏览器只与本机 :54115 │
-  └──────────────────────────┘            └──────────────────────────┘
+        Windows 节点                                  macOS / Linux 节点
+  ┌──────────────────────────┐                  ┌──────────────────────────┐
+  │ DSH + dsh-lan-bridge     │                  │ DSH + dsh-lan-bridge     │
+  │  · 本机会话 → 内容存储    │                  │  · 本机会话 → 内容存储    │
+  │  · HTTP :47820 (HMAC)    │◀── 直接互连 ────▶│  · HTTP :47820 (HMAC)    │
+  │  · UDP :47821 发现       │                  │  · UDP :47821 发现       │
+  │  · 浏览器只访问本机       │                  │  · 浏览器只访问本机       │
+  └──────────────────────────┘                  └──────────────────────────┘
+                 ▲                                             ▲
+                 └──────────── 第三台、第四台…… ───────────────┘
 ```
 
-- 浏览器（面板）**只**访问本机的 `/_dsh/lan/*`；跨机请求全部由宿主半（`index.js`）发起，令牌不会进入页面以外的任何地方。
-- 共享区是磁盘上的普通文件，位置：`$DSH_HOME/lan-bridge/`
-  - `store/conversations/<machineId>/<sessionId>.json`
-  - `store/memory/<machineId>/<name>`
-  - `store/manifests/<machineId>.json`
-  - `store/audit.jsonl`（谁在什么时候读过什么、写过什么）
-  - `cache/export.json`（导出游标，避免重复扫描）、`cache/roots.json`
-  - `backups/<rootId>/<原路径>.<时间戳>.bak`（远程写文件前的旧内容）
-- 端口：HTTP **47820**、UDP 发现 **47821**（可在设置里改；UDP 被路由器挡住也能手动填地址配对）。
+### 身份与信任
+
+- 每个节点有稳定的 `nodeId`（沿用 v1 的 machineId）和一对 Ed25519 密钥；公钥指纹用于识别设备、发现指纹变化。
+- 同一个空间共享一个 `networkKey`。邀请码里包含 spaceId、networkKey 和本机地址；拿到邀请码的机器才能通过 HMAC 校验。
+- 每个请求带 `x-dsh-node / x-dsh-time / x-dsh-nonce / x-dsh-sign`，签名覆盖方法、路径、节点、指纹、时间、nonce 和 body 的 SHA-256；5 分钟时间窗 + nonce 去重防重放。
+- 发现到的设备默认是 **待确认**；必须手动“信任”后才会同步、浏览文件或借用模型。“阻止”的设备不会再被连接。
+- 安全边界是“信任整个空间”：networkKey 是空间级共享密钥，协议层能证明“请求来自空间成员”，不能证明“请求来自某台特定设备”。设备级信任表用于控制同步、读文件和借模型，不用于防空间内恶意成员。不要把邀请码发给不可信的人。
+
+### 数据流
+
+- 本地内容存储：`$DSH_HOME/lan-bridge/store/`
+  - `index.json`：全局单调 `rev` + 对象索引
+  - `conversations/<nodeId>/<sessionId>.json`
+  - `memory/<nodeId>/<name>`
+  - `manifests/<nodeId>.json`
+  - `audit.jsonl`
+- 同步：每个 peer 记录 `pulledThrough` / `pushedThrough` 游标；`GET /api/v2/pull?since=N` 返回下一段对象，`POST /api/v2/push` 应用对象。会话不可变，记忆/清单按 `updatedAt` last-write-wins。第三台机器的对象可以通过任意已信任 peer 传递。
+- 文件传输：发送端 `POST /transfer/offer`，接收端接受后逐块 `POST /transfer/chunk`，最后 `POST /transfer/complete` 校验整文件 SHA-256 并原子落盘。下载方向由本机主动 `POST /transfer/export`，再拉取分块，避免要求对端回连。
+- 远程 AI：`POST /api/v2/ai/ask` 只做普通 chat completion，使用目标机自己的 provider 凭据；**不在目标机执行工具、不读目标机文件**。远程模型默认关闭，需要在设置里显式打开。
+
+### 端口
+
+- HTTP：**47820**（可改）
+- UDP 发现：**47821**（可改）
+- 浏览器 API：本机 `/_dsh/lan/*`
 
 ---
 
-## 三、两台电脑都要装
+## 三、安装
 
 插件目录：`~/.dsh/plugins/dsh-lan-bridge/`（Windows 为 `C:\Users\<你>\.dsh\plugins\dsh-lan-bridge\`）。
 
-注册进 profile（`~/.dsh/profiles/desktop/package.json`）：
+把仓库同步到该目录（仓库自带 `sync-to-plugins.cmd`，Windows 双击即可），或手动复制 `index.js`、`client.js`、`lib/`、`cordis.patch.yml`、`package.json`。
+
+在 profile（`~/.dsh/profiles/desktop/package.json`）里注册：
 
 ```jsonc
 {
@@ -57,123 +81,141 @@
   },
   "dsh": {
     "profile": {
-      "bundles": [ "...", "dsh-lan-bridge" ]
+      "bundles": ["...", "dsh-lan-bridge"]
     }
   }
 }
 ```
 
-然后在 profile 目录执行一次安装（Windows 内置 pnpm 的路径见下），**registry 必须用 npmjs**：
+如果 profile 依赖有变化，在 profile 目录执行一次（registry 用 npmjs）：
 
 ```powershell
 cd C:\Users\<你>\.dsh\profiles\desktop
 node "E:\DeepSeek Harness\resources\runtime\primary-runtime\dependencies\pnpm\bin\pnpm.cjs" install --registry=https://registry.npmjs.org
 ```
 
-macOS 上换成系统 pnpm 即可：`pnpm install --registry=https://registry.npmjs.org`。
+macOS / Linux 用系统 pnpm：`pnpm install --registry=https://registry.npmjs.org`。
 
 装完**重开 DSH**，侧边栏出现「局域网」图标。
 
----
+### macOS 快速安装
 
-## 四、第一次配对（三分钟）
+Windows 侧已经打好包：`dist/dsh-lan-bridge-0.2.0-macos.zip`（约 97 KB）。把它 AirDrop / U 盘 / `scp` 到 Mac，然后：
 
-在**常开的那台**（设为 hub）：
+```bash
+cd ~/Downloads
+unzip -o dsh-lan-bridge-0.2.0-macos.zip -d lan-bridge
+bash lan-bridge/install-macos.sh
+```
 
-1. 打开 局域网 → 设置 → 角色选「主机」，端口保持 47820，保存。
-2. 面板会显示局域网地址（例如 `192.168.1.23`）和一串共享令牌，复制这两样。
-3. 确认系统防火墙放行了该端口（Windows 首次监听会弹窗，选「允许专用网络」）。
+脚本会备份旧版本、复制到 `~/.dsh/plugins/dsh-lan-bridge/`、把 `dsh-lan-bridge` 注册进 desktop profile 的 `dependencies` 和 `bundles`，并建立 `node_modules` 链接；不会碰 `~/.dsh/lan-bridge/config.json`。装完 **Command+Q 完全退出 DSH** 再打开。
 
-在**另一台**（设为 peer）：
-
-4. 设置 → 角色选「成员」，填主机地址 + 端口 + 令牌。
-5. 点「局域网自动发现」可自动填地址；点「测试连接」应提示「连接成功 · rev N」。
-6. 保存，回到「对话」页，点右上角「立即同步」。
-
-两台都看到对方的会话，就通了。
-
-> 令牌是两台互信的唯一凭据，等于密码。换掉它只需在主机改、在成员同步改一次即可。
+前提：Mac 上已经装过 DSH 并至少启动过一次（存在 `~/.dsh`）。macOS 首次运行时在“系统设置 → 网络 → 防火墙”里允许 DSH 接受传入连接，或至少放行 TCP `47820` 和 UDP `47821`。如果 DSH 用的不是 `desktop` profile，安装时加 `DSH_PROFILE=<名字>`。
 
 ---
 
-## 五、五个页面怎么用
+## 四、第一次配对
 
-- **对话**：左侧按电脑筛选、按标题/路径搜索；点开右侧看完整过程。思考链与工具输出默认折叠，点一下展开。会话按机器分目录存放，互不覆盖。右上角可以把当前这条会话 **fork 到本机的某个工作区**（见下）。
-- **插件**：上半是本机清单（绿色点=运行中），中间是对端清单与差异（待安装 / 版本不同 / 待启用 bundle），点「一键应用」只改 profile 的 `package.json`，不会自动联网；改完点「运行 pnpm install」。
-- **文件**：先选「本机 / 对端」，再选共享根目录（默认按本机真实用过的工作区自动列出），左侧目录、右侧编辑，保存留备份。
-- **记忆**：列出本机探测到的记忆文件与共享区里的版本；「用这份覆盖本机」会在覆盖前备份原文件。
-- **设置**：角色与端口、令牌、发现、同步计划、共享根目录增删、最近活动（审计）。
+1. 两台电脑都打开「局域网 → 概览」。
+2. 在 A 上点「邀请设备」，复制邀请码。
+3. 在 B 上打开「设置 → 加入已有空间」，粘贴邀请码。
+4. B 会通过邀请码里的地址连接 A；两边「概览」出现对方设备，状态为「待确认」。
+5. 在 A 和 B 上分别点「信任」。
+6. 点「同步」；概览会显示同步了多少对象。
 
-### Fork 到本机工作区
-
-「对话」页右边挑一个本机工作区、点 **Fork**，就把当前这条会话写成一份新的 DSH 会话，接着聊：
-
-- 本机的对话和别的电脑同步过来的对话都能 fork；下拉里是本机真实注册过的工作区（路径 · 已有会话数）。
-- 生成的是标准 v4 会话文件（`$DSH_HOME/sessions/<工作区键>/session-<uuid>/session.v4.jsonl.zstd`），写完会顺带挂进目标工作区 —— 刷新页面就能在侧栏看到，点开继续对话；挂载失败时退回「已写入」，重开 DSH 也能看到。
-- 只搬用户消息与助手正文：工具调用与思考链不搬（对端同步过来的本来也只有归一化后的条目，硬造 `tool/call` 会被会话结构校验拒掉）。
-- 原有会话一个字节都不会被改动，只会新建一份文件。
+如果 UDP 广播被防火墙挡住：在「设置 → 手动添加设备」填 `IP:47820`，或在邀请码里已经带了地址的情况下直接加入。Windows 首次运行可能弹出防火墙提示，需要允许专用网络。
 
 ---
 
-## 六、安全边界（请读一遍）
+## 五、面板
 
-- 所有跨机接口都要求令牌；没有匿名路由。
-- 文件访问**只能**落在明确共享的根目录内：路径做规范化后校验，拒绝 `..`、绝对路径和符号链接逃逸。
-- 默认拒绝读写 `.env`、`.git/config`、`*.pem`/`*.key`/`id_rsa`、`credentials*`、`secrets*`、`.ssh/**` 等敏感形状。
-- 删除与重命名不做二次确认以外的保护，**不可恢复**；重要目录先别加进共享列表。
-- 令牌存于 `$DSH_HOME/lan-bridge/config.json`，只在本机使用。
+- **概览**：本机状态、设备卡片、邀请、待接收文件、同步摘要。
+- **文件**：选择「本机 / 某台设备」→ 工作区 → 目录；文本可预览；远端文件可「下载到本机」，本机文件可「发送到设备」。
+- **对话**：选择来源设备，列出会话；预览后「在 DSH 中打开」会把远端会话 fork 成本机真实 session，并切换到 DSH 原生对话界面。
+- **AI**：选择算力来源和模型；可以问本机，也可以借用已信任设备的模型；「多机协作」把同一问题并行发给多台设备。
+- **设置**：设备名、端口、发现、远程读/远程模型/自动接收/工具开关；邀请码、加入空间、手动添加设备、共享目录、信任列表、审计。
 
 ---
 
-## 七、故障排查
+## 六、给 AI 用的工具
 
-| 现象 | 处理 |
+宿主启动时向 `ctx.tools` 注册（`agentTools` 开启时）：
+
+| 工具 | 作用 |
 | --- | --- |
-| 测试连接失败 `UNREACHABLE` | 端口没监听、防火墙拦截、或两台不在同一网段；先在主机 `curl http://127.0.0.1:47820/api/hello` 自测 |
-| `BAD_TOKEN` | 两台令牌不一致，重新复制一次 |
-| 自动发现不到 | 路由器禁止广播；直接手填地址，不影响使用 |
-| 面板显示「渲染失败」 | 先看堆栈：如果是 `think is not defined`，那是 0.1.2 的已知缺陷，升到 0.1.3 后**重开 DSH**；否则多半是插件客户端包版本变了而页面还是旧的，`Ctrl+F5` 硬刷新整个窗口 |
-| 对话里没有新内容 | 点「立即同步」；或把拉取间隔调小；确认对方会话确实产生过事件 |
-| Fork 之后侧栏没出现 | 先 `Ctrl+F5` 刷新页面；仍没有就重开 DSH。提示是「已写入」而不是「已挂进」时，说明没挂进工作区，会话在侧栏「未分组」里 |
-| Fork 提示「这条会话没有可 fork 的内容」/「目标工作区不存在了」 | 前者说明对端那条会话是空壳（只有 header），换一条有内容的；后者是下拉里选的工作区已被删掉，刷新页面重挑一个 |
-| 插件页「应用清单」后没生效 | 必须再点「运行 pnpm install」，然后重开 DSH |
+| `lan_peers` | 列出局域网节点、信任状态、地址、最近同步 |
+| `lan_workspaces` | 列出本机或远端共享工作区（只返回不透明 root id） |
+| `lan_read` | 读取本机/远端工作区文本文件 |
+| `lan_conversations` | 列出本机/远端会话元数据 |
+| `lan_conversation` | 读取一条会话的归一化 transcript |
+| `lan_ask` | 让本机或远端模型回答一个问题（远端只跑模型，不跑工具） |
+| `lan_team` | 把一个 prompt 并行发给多台已信任设备 |
+| `lan_send_file` | 把共享工作区的文件发到另一台设备；发送前走 DSH 原生 approval |
+
+远端 AI 默认关闭；只有目标机设置里打开「允许信任设备借用模型」才会响应。
 
 ---
 
-## 八、明确的限制
+## 七、安全边界
 
-- **不合并记忆**：两份 `MEMORY.md` 有冲突时，由你选「用谁覆盖谁」，插件不做自动 merge（合并语义无法猜）。
-- **Fork 只搬对话内容**：工具调用、思考链与附件不随 fork 过去，生成的是普通的新会话（不是源会话的副本镜像）；也正因如此它不会碰源会话文件。
-- **不做文件冲突解决**：同时改同一个文件，后写的赢；写入前会留备份。
-- **不是逐字实时**：会话按事件批量导出（默认推送 2s / 拉取 4s 的节奏），是「秒级」，不是「打字级」。
-- **单次请求 8 MiB 上限**：推送按 8 MiB 分批发，主机的 32 MiB 请求体上限因此不再是天花板；单条对话本身受 `maxConversationBytes`（默认 8 MiB）限制。增量靠 `sync.json` 记录推送/拉取水位，换主机（地址、端口或令牌变了）会自动从零重放。
-- **不替代 DSH 自动化**：需要定时跑代理任务的场景，请用 DSH 自带的自动化功能；本插件的「同步计划」只负责同步。
-- 只在**两台**机器上验证过（Windows hub + macOS peer）。三台以上没有专门设计，令牌与共享区是同一个，行为等同「多成员接一个主机」，未做冲突检测。
+- 浏览器只访问本机同源 `/_dsh/lan/*`；networkKey 不会进入页面。
+- 所有跨机请求都必须通过 HMAC；没有邀请码的机器连 `hello` 都过不了。
+- 待确认设备只能调用 `hello`，不能 pull/push、不能读文件、不能借模型。
+- 文件路径只能落在共享 root 内；`..`、绝对路径、盘符、NUL、符号链接逃逸都会被拒绝；常见凭据文件名默认拒绝（`.env`、`id_rsa`、`.npmrc` 等）。
+- 远端模型调用不携带工具、不读目标机文件；目标机可以用 allow list 限制模型。
+- 传输先落到 `$DSH_HOME/lan-bridge/inbox/<id>/` 或目标工作区，校验 SHA-256 后才出现；接收确认默认开启。
+
+已知限制（v0.2 有意不做）：
+
+- 不做跨机 agent 执行。DSH 的权限/沙箱绑定在本地 session，无法安全地强加给远端调用者；远端只借用模型。
+- 不做端到端加密。协议是局域网 HTTP + HMAC，能防冒充/篡改/重放，不防同网段抓包；不要把端口暴露到公网。
+- 不做文件冲突合并。同名文件按“接收方确认”覆盖，旧文件可通过备份/审计找回。
+- 二进制文件不在面板内预览；可以下载或发送。
+- 单文件上限 2 GiB，请求体上限由传输分块控制。
 
 ---
 
-## 九、开发
+## 八、开发与测试
 
 ```powershell
-cd .dsh\plugins\dsh-lan-bridge
-node test/smoke.mjs          # 12 项离线检查：zstd 帧解析、事件归一化、store、文件防护、清单差异、导出增量、分批切分
-node test/e2e.mjs            # 10 步：不依赖 DSH 启动宿主半，走完本地路由 + LAN 接口（含错误令牌、fork 与挂载）
-node test/two-machines.mjs   # 8 步：两个进程、两个 DSH_HOME，验证对话/记忆/清单/文件真正跨机
-node test/markdown.mjs       # 34 项：正文 Markdown 渲染（标题、围栏、行内、列表与嵌套、表格与对齐、单位、转义、链接白名单）
-node test/render.mjs         # 14 项：渲染整条会话与「对话」页签，断言思考链折叠状态真的传到子组件、fork 工具条真的渲染出来（可传参指定别的 client.js）
-node test/fork.mjs           # 22 项：fork 文件生成（路径编码、事件序列与配对、双帧 zstd、header 形状、wx 写法、读回、错误分支、工作区不回退）
+npm test
 ```
 
-六套测试全部使用临时目录，不碰真实 `$DSH_HOME`，也不占用 47820 端口（用随机高位端口）。
-`test/markdown.mjs`、`test/render.mjs`、`test/fork.mjs` 都不依赖浏览器：markdown 从 `client.js` 里截出 markdown 段落、用桩 `C`/`h`/`useMemo` 在本机跑；render 从 `primitives` 到「插件 tab」截出组件段、用桩 `h`/`useState` 渲染一遍再遍历元素树；fork 用 `mkdtempSync` 造一个临时 `DSH_HOME`，把生成的会话文件按帧解回来逐条断言。
+测试使用临时 `DSH_HOME`，不碰真实数据：
 
-### 打 macOS 更新包
+- `test/v2-core.mjs`：v1→v2 配置/存储迁移、HMAC 重放、传输分块校验
+- `test/v2-ai.mjs`：模型发现、流式回答、多机 fan-out、8 个工具
+- `test/render-v2.mjs`：客户端 bundle 加载与 slot 注册
+- `test/v2-host.mjs`：宿主 boot、浏览器 API、CORS 边界
+- `test/fork.mjs`：22 项 fork 格式校验
+- `test/v2-e2e.mjs`：两个真实 Node 节点进程 — 邀请、信任、同步、远端读文件、下载、发送、借模型、多机 fan-out、远程 fork
 
-```powershell
-powershell -File scripts\build-macos-zip.ps1
+除了上面的自动化测试，0.2 还在真实 DSH `0.2.1-rc.5` 里做过一次手工集成验证：临时 profile 加载插件后，宿主 boot、侧边栏「局域网」入口、五个标签页、文件树、两个真实 DSH 进程的邀请/加入/信任/同步/远端读/发送都正常；`uiWorkspace` 注入后“在 DSH 中打开”能切到原生会话；`tools` 注入后 8 个 `lan_*` 工具出现在宿主工具表里。
+
+单独跑：`node test/v2-e2e.mjs`。
+
+---
+
+## 九、目录
+
 ```
-
-产物是 `dist/dsh-lan-bridge-<version>-macos.zip`，内含 `install-macos.sh`、`更新说明.txt` 和完整插件目录。
-版本号取自 `package.json`，改了版本再跑一次即可。
-
-宿主半（`index.js` + `lib/`）是普通 ESM，可单独 `node --check`。浏览器半（`client.js`）是一个 `window.__ModuleLoader__.load` 工厂，用 `React.createElement`（无 JSX），通过 `ctx.slots` 注册侧边栏与主面板。
+index.js             宿主半：路由、生命周期、节点编排
+client.js            浏览器半：原生 slot 面板
+lib/config.js         v2 配置 + v1 迁移
+lib/identity.js       Ed25519 身份、邀请码
+lib/auth.js           HMAC 请求签名/校验
+lib/peers.js          设备表、信任、同步游标
+lib/store.js          内容寻址存储 + v1 迁移
+lib/mesh.js           多 peer anti-entropy
+lib/discovery.js      UDP 发现
+lib/transport.js      HTTP 服务端/客户端
+lib/transfer.js       AirDrop 分块传输
+lib/workspaces.js     工作区目录
+lib/ai.js             远端模型调用与 fan-out
+lib/agent-tools.js    8 个模型工具
+lib/files.js          路径安全、读写、导入
+lib/sessions.js       会话日志解析
+lib/fork.js           远端 transcript → 本地 DSH session
+lib/memory.js         MEMORY.md / USER.md
+lib/plugins.js        插件清单与应用
+```

@@ -1,5 +1,66 @@
 # 更新记录
 
+## 0.2.0 — 2026-11-02
+
+一次架构级重写：从「两台机器的 hub/peer」变成「每台机器都是节点的局域网 mesh」，并把面板改成设备中心。
+
+### 新：去中心化网络
+
+- 移除 `role: hub | peer`。每个节点同时运行 HTTP 服务、UDP 发现和同步循环，任意已信任设备直接互连。
+- 节点身份改为 `nodeId` + Ed25519 密钥对；设备表新增 `trusted / pending / blocked` 三档信任，发现到不等于信任。
+- 请求用共享 `networkKey` 做 HMAC-SHA256 签名，覆盖方法、路径、节点、时间、nonce 和 body 哈希；5 分钟时间窗 + nonce 去重防重放。
+- v1 配置自动迁移：旧 `machineId` 变成 `nodeId`，旧 `token` 拉伸成 v2 `networkKey`，所以两台旧机器升级后仍在同一个空间里。
+- 邀请码包含 spaceId、networkKey 和地址，取代旧的手填 token。
+
+### 新：多 peer 同步
+
+- 存储改为内容寻址 + 全局单调 `rev`；会话不可变，记忆和插件清单按 `updatedAt` last-write-wins。
+- 每个 peer 维护 `pulledThrough` / `pushedThrough` 游标；`GET /api/v2/pull?since=N` + `POST /api/v2/push`，第三台机器的对象可以经任意 peer 传递。
+- v1 的 `store/index.json`、`conversations/`、`memory/`、`manifests/` 自动导入 v2，旧索引保留为 `index.v1.json`。
+
+### 新：AirDrop 式文件传输
+
+- 发送端 offer → 接收端确认（或自动接收）→ 分块传输 → 整文件 SHA-256 校验 → 收件箱或目标工作区原子落盘。
+- 每块单独 SHA-256；断点续传；接收方可选收件箱或工作区；单文件上限 2 GiB。
+- 下载方向由本机主动 export + 拉块，不需要对端回连。
+
+### 新：远端对话与原生打开
+
+- 远端会话列表、transcript 预览、一键 fork 到本机真实 DSH session。
+- fork 后客户端调用 `ctx.uiWorkspace.openSession(sessionId)`，直接切回 DSH 原生对话界面；面板不再充当第二套聊天客户端。
+
+### 新：远端模型与多机协作
+
+- `POST /api/v2/ai/ask` 只执行普通 chat completion，使用目标机自己的 provider 凭据，不携带工具、不读目标机文件。
+- 远端模型默认关闭，必须显式打开；支持模型 allow list 和每日额度。
+- 新增 8 个模型工具：`lan_peers / lan_workspaces / lan_read / lan_conversations / lan_conversation / lan_ask / lan_team / lan_send_file`；发送文件走 DSH 原生 approval。
+- 多机 fan-out：同一 prompt 并行发给多台已信任设备，结果回到面板或本地 AI。
+
+### 新：原生 UI
+
+- 面板重写为设备中心：概览 / 文件 / 对话 / AI / 设置。
+- 颜色、圆角、边框改用 DSH 原生 `--dsw-*` token，自动跟随明暗主题。
+- 移除自绘 Markdown 聊天主界面；只保留轻量预览，真正的对话交给 DSH。
+
+### 真实 DSH 集成修正
+
+- 客户端显式注入 `uiWorkspace` / `sessions`，否则 `ctx.uiWorkspace` 在 Cordis 里会报 “cannot get property ... without inject”，“在 DSH 中打开”只会写文件、不能切到原生会话。
+- 宿主显式注入 `tools`，否则 8 个 `lan_*` 工具注册会静默失败；状态接口现在会列出已注册工具名。
+- 浏览器 API 不再返回 `Access-Control-Allow-Origin: *`，避免任意网页读取邀请码/驱动局域网 API；LAN 传输仍用 HMAC 保护。
+- 邀请码优先选择真实 RFC1918 网卡，跳过 Tailscale / VMware / Hyper-V / Docker 等虚拟网卡。
+- fork 后如果客户端会话目录尚未刷新，先 `sessions.manager.refreshList()` 再重试 `openSession`。
+
+### 安全
+
+- 待确认设备只能调用 `hello`；同步、读文件、借模型都要求 `trusted`。
+- 文件路径限制在共享 root 内，拒绝 `..`、绝对路径、盘符、NUL、符号链接逃逸和常见凭据文件名。
+- 远端模型不执行工具；不提供跨机 agent 执行。
+
+### 测试
+
+- 新增 `test/v2-core.mjs`、`test/v2-ai.mjs`、`test/render-v2.mjs`、`test/v2-host.mjs`、`test/v2-e2e.mjs`。
+- `v2-e2e` 起两个真实节点进程，覆盖邀请、加入、信任、同步、远端读文件、下载、发送。
+
 ## 0.1.4 — 2026-10-26
 
 0.1.3 的补丁：fork 失败时的报错终于说人话了。

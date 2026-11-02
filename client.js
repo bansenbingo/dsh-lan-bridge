@@ -1,18 +1,11 @@
 /**
- * dsh-lan-bridge — browser half.
+ * dsh-lan-bridge — browser half (v2).
  *
- * One sidebar entry ("局域网") that opens a single tabbed panel. All data comes
- * from `/_dsh/lan/*` on this origin, so no host, port or token ever reaches the
- * page: the host half owns the LAN traffic.
- *
- * Tabs:
- *   对话  every conversation in the shared store, with chain of thought, tool
- *         calls and tool output rendered in order
- *   插件  this machine's plugin list, the peers' published lists, one-click
- *         apply, install, enable/disable
- *   文件  browse and edit workspace files here or on the peer
- *   记忆  MEMORY.md / USER.md on both sides, with explicit take/push
- *   设置  pairing (hub or peer), discovery, sync plan, shared roots, audit
+ * A single sidebar entry ("局域网") that opens a device-centric panel in the
+ * native DSH main slot. The panel is deliberately not a second chat client:
+ * remote conversations are forked into a real local session and then opened in
+ * DSH's own conversation surface. What remains here is the bridge: devices,
+ * shared workspaces, AirDrop-style transfers, and model borrowing.
  */
 
 window.__ModuleLoader__.load({
@@ -27,187 +20,136 @@ window.__ModuleLoader__.load({
     const useRef = React.useRef
 
     const PREFIX = '/_dsh/lan'
+    let HOST = null
 
     // ------------------------------------------------------------ primitives
 
     const C = {
-      text: 'var(--dsw-alias-label-primary, #e8eaed)',
-      dim: 'var(--dsw-alias-label-secondary, #9aa0a6)',
-      faint: 'var(--dsw-alias-label-tertiary, #6b7076)',
-      border: 'var(--dsw-alias-border-l1, rgba(255,255,255,0.10))',
-      layer: 'var(--dsw-alias-bg-layer-1, rgba(255,255,255,0.03))',
-      layer2: 'var(--dsw-alias-bg-layer-2, rgba(255,255,255,0.06))',
-      brand: 'var(--dsw-alias-brand-primary, #7aa2f7)',
-      ok: 'var(--dsw-alias-state-success-primary, #6cc070)',
-      warn: 'var(--dsw-alias-state-warning-primary, #e0af68)',
-      err: 'var(--dsw-alias-state-error-primary, #f7768e)',
-      mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+      text: 'var(--dsw-alias-label-primary, #e9ecef)',
+      dim: 'var(--dsw-alias-label-secondary, #a0a6ad)',
+      faint: 'var(--dsw-alias-label-tertiary, #737a82)',
+      border: 'var(--dsw-alias-border-l1, rgba(127,127,127,0.18))',
+      border2: 'var(--dsw-alias-border-l2, rgba(127,127,127,0.28))',
+      layer: 'var(--dsw-alias-bg-layer-1, rgba(127,127,127,0.055))',
+      layer2: 'var(--dsw-alias-bg-layer-2, rgba(127,127,127,0.09))',
+      layer3: 'var(--dsw-alias-bg-layer-3, rgba(127,127,127,0.13))',
+      base: 'var(--dsw-alias-bg-base, transparent)',
+      brand: 'var(--dsw-alias-brand-primary, #4d8dff)',
+      ok: 'var(--dsw-alias-state-success-primary, #3fb950)',
+      warn: 'var(--dsw-alias-state-warning-primary, #d29922)',
+      err: 'var(--dsw-alias-state-error-primary, #f85149)',
+      link: 'var(--dsw-alias-link, #4d8dff)',
+      mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      radius: 'var(--dsw-radius-md, 8px)',
+      radiusSm: 'var(--dsw-radius-sm, 6px)'
     }
 
     const S = {
-      root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, color: C.text, fontSize: 13 },
-      header: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '10px 14px',
-        borderBottom: '1px solid ' + C.border,
-        flexShrink: 0
-      },
-      tabs: {
-        display: 'flex',
-        gap: 2,
-        padding: '6px 10px',
-        borderBottom: '1px solid ' + C.border,
-        flexShrink: 0,
-        flexWrap: 'wrap'
-      },
+      root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, color: C.text, fontSize: 13, background: C.base },
+      header: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid ' + C.border, flexShrink: 0 },
+      title: { fontWeight: 650, fontSize: 14, letterSpacing: 0.2 },
+      sub: { color: C.faint, fontSize: 11.5, marginTop: 2, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
+      tabs: { display: 'flex', gap: 2, padding: '6px 10px', borderBottom: '1px solid ' + C.border, flexShrink: 0, overflowX: 'auto' },
       tab: {
-        appearance: 'none',
-        border: '1px solid transparent',
+        border: 'none',
         background: 'transparent',
         color: C.dim,
-        padding: '5px 11px',
-        borderRadius: 7,
-        cursor: 'pointer',
+        padding: '6px 12px',
+        borderRadius: C.radiusSm,
         fontSize: 12.5,
-        fontFamily: 'inherit'
+        cursor: 'pointer',
+        whiteSpace: 'nowrap'
       },
-      tabOn: {
-        color: C.text,
-        background: C.layer2,
-        border: '1px solid ' + C.border
-      },
-      body: { flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' },
+      tabOn: { background: C.layer2, color: C.text, fontWeight: 600 },
+      body: { flex: 1, minHeight: 0, overflow: 'auto', padding: 16 },
+      card: { border: '1px solid ' + C.border, borderRadius: C.radius, background: C.layer, padding: 12 },
       row: { display: 'flex', alignItems: 'center', gap: 8 },
-      card: { border: '1px solid ' + C.border, background: C.layer, borderRadius: 10, padding: 12 },
-      label: { fontSize: 11.5, color: C.dim, marginBottom: 4, display: 'block' },
-      input: {
-        width: '100%',
-        boxSizing: 'border-box',
-        background: C.layer,
-        border: '1px solid ' + C.border,
-        color: C.text,
-        borderRadius: 7,
-        padding: '6px 8px',
-        fontFamily: 'inherit',
-        fontSize: 12.5,
-        outline: 'none'
-      },
+      col: { display: 'flex', flexDirection: 'column', gap: 10 },
+      grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 10 },
       btn: {
-        appearance: 'none',
-        border: '1px solid ' + C.border,
-        background: C.layer2,
+        border: '1px solid ' + C.border2,
+        background: C.layer,
         color: C.text,
-        borderRadius: 7,
-        padding: '5px 11px',
-        fontSize: 12.5,
+        padding: '5px 10px',
+        borderRadius: C.radiusSm,
         cursor: 'pointer',
-        fontFamily: 'inherit',
-        whiteSpace: 'nowrap'
-      },
-      btnPrimary: {
-        appearance: 'none',
-        border: '1px solid ' + C.brand,
-        background: C.brand,
-        color: '#0b1020',
-        borderRadius: 7,
-        padding: '5px 12px',
         fontSize: 12.5,
-        cursor: 'pointer',
-        fontWeight: 600,
-        fontFamily: 'inherit',
-        whiteSpace: 'nowrap'
+        lineHeight: 1.4
       },
-      btnDanger: {
-        appearance: 'none',
-        border: '1px solid ' + C.err,
-        background: 'transparent',
-        color: C.err,
-        borderRadius: 7,
-        padding: '5px 11px',
+      btnPrimary: { border: '1px solid transparent', background: C.brand, color: '#fff', fontWeight: 600 },
+      btnGhost: { border: '1px solid transparent', background: 'transparent', color: C.dim },
+      btnDanger: { border: '1px solid ' + C.err, background: 'transparent', color: C.err },
+      input: {
+        border: '1px solid ' + C.border2,
+        background: C.base,
+        color: C.text,
+        padding: '5px 8px',
+        borderRadius: C.radiusSm,
         fontSize: 12.5,
-        cursor: 'pointer',
-        fontFamily: 'inherit'
+        outline: 'none',
+        minWidth: 0
       },
-      badge: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 5,
-        fontSize: 11,
-        padding: '2px 7px',
-        borderRadius: 999,
-        border: '1px solid ' + C.border,
-        color: C.dim
+      select: {
+        border: '1px solid ' + C.border2,
+        background: C.base,
+        color: C.text,
+        padding: '5px 8px',
+        borderRadius: C.radiusSm,
+        fontSize: 12.5,
+        maxWidth: 220
       },
-      dot: { width: 6, height: 6, borderRadius: 3, display: 'inline-block' },
-      mono: { fontFamily: C.mono, fontSize: 12 },
-      scroll: { overflow: 'auto', minHeight: 0 },
-      muted: { color: C.dim, fontSize: 12 },
-      faint: { color: C.faint, fontSize: 11.5 },
-      err: { color: C.err, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-      ok: { color: C.ok, fontSize: 12 }
-    }
-
-    function fmtTime(value) {
-      if (!value) return ''
-      try {
-        const date = new Date(value)
-        const now = Date.now()
-        const diff = now - value
-        if (diff < 60000) return '刚刚'
-        if (diff < 3600000) return Math.round(diff / 60000) + ' 分钟前'
-        if (diff < 86400000) return Math.round(diff / 3600000) + ' 小时前'
-        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString().slice(0, 5)
-      } catch (err) {
-        return ''
+      label: { color: C.faint, fontSize: 11.5, marginBottom: 3, display: 'block' },
+      badge: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 999, fontSize: 11, border: '1px solid ' + C.border },
+      dot: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', flexShrink: 0 },
+      mono: { fontFamily: C.mono, fontSize: 11.5 },
+      code: { fontFamily: C.mono, fontSize: 11.5, background: C.layer2, padding: '1px 4px', borderRadius: 4 },
+      sectionTitle: { fontSize: 12, fontWeight: 650, color: C.dim, textTransform: 'uppercase', letterSpacing: 0.6, margin: '4px 0 8px' },
+      divider: { height: 1, background: C.border, margin: '12px 0' },
+      empty: { color: C.faint, padding: 18, textAlign: 'center', fontSize: 12.5, border: '1px dashed ' + C.border, borderRadius: C.radius },
+      note: { color: C.dim, fontSize: 12, lineHeight: 1.5 },
+      err: { color: C.err, fontSize: 12, lineHeight: 1.5 },
+      ok: { color: C.ok, fontSize: 12 },
+      pre: {
+        margin: 0,
+        padding: 10,
+        background: C.layer2,
+        borderRadius: C.radiusSm,
+        maxHeight: 420,
+        overflow: 'auto',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        fontFamily: C.mono,
+        fontSize: 11.5,
+        lineHeight: 1.55
       }
     }
 
-    function fmtBytes(value) {
-      const n = typeof value === 'number' ? value : 0
-      if (n < 1024) return n + ' B'
-      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
-      return (n / 1024 / 1024).toFixed(1) + ' MB'
-    }
-
-    async function api(path, options) {
-      const opts = options || {}
-      const init = { method: opts.method || 'GET', headers: { accept: 'application/json' } }
-      if (opts.body !== undefined) {
-        init.headers['content-type'] = 'application/json'
-        init.body = JSON.stringify(opts.body)
-      }
-      const response = await fetch(PREFIX + path, init)
-      let body = null
-      try {
-        body = await response.json()
-      } catch (err) {
-        body = null
-      }
-      if (!response.ok) {
-        const message = (body && body.error && body.error.message) || 'HTTP ' + response.status
-        const error = new Error(message)
-        error.code = (body && body.error && body.error.code) || 'HTTP_' + response.status
-        throw error
-      }
-      return body
+    function classNames() {
+      return Array.prototype.slice.call(arguments).filter(Boolean).join(' ')
     }
 
     function Text(props) {
-      return h('div', { style: Object.assign({}, props.style) }, props.children)
+      return h('div', { style: Object.assign({}, props.style || {}) }, props.children)
     }
 
     function Btn(props) {
-      const style = props.primary ? S.btnPrimary : props.danger ? S.btnDanger : S.btn
+      const style = Object.assign(
+        {},
+        S.btn,
+        props.primary ? S.btnPrimary : null,
+        props.ghost ? S.btnGhost : null,
+        props.danger ? S.btnDanger : null,
+        props.small ? { padding: '2px 7px', fontSize: 11.5 } : null,
+        props.style || {}
+      )
       return h(
         'button',
         {
           type: 'button',
-          style: Object.assign({}, style, props.disabled ? { opacity: 0.5, cursor: 'default' } : null, props.style),
           disabled: props.disabled === true,
-          onClick: props.disabled ? undefined : props.onClick,
-          title: props.title
+          onClick: props.onClick,
+          title: props.title || '',
+          style: Object.assign({}, style, props.disabled ? { opacity: 0.5, cursor: 'default' } : null)
         },
         props.children
       )
@@ -216,1805 +158,36 @@ window.__ModuleLoader__.load({
     function Field(props) {
       return h(
         'label',
-        { style: { display: 'block', marginBottom: 10 } },
+        { style: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 } },
         h('span', { style: S.label }, props.label),
+        props.children,
+        props.hint ? h('span', { style: { color: C.faint, fontSize: 11 } }, props.hint) : null
+      )
+    }
+
+    function Badge(props) {
+      const tone = props.tone || 'neutral'
+      const color = tone === 'ok' ? C.ok : tone === 'warn' ? C.warn : tone === 'err' ? C.err : tone === 'brand' ? C.brand : C.dim
+      return h('span', { style: Object.assign({}, S.badge, { color, borderColor: props.solid ? color : C.border }) }, props.children)
+    }
+
+    function Dot(props) {
+      const color = props.tone === 'ok' ? C.ok : props.tone === 'warn' ? C.warn : props.tone === 'err' ? C.err : C.faint
+      return h('span', { style: Object.assign({}, S.dot, { background: color, boxShadow: props.pulse ? '0 0 0 3px ' + color + '22' : 'none' }) })
+    }
+
+    function Section(props) {
+      return h(
+        'div',
+        { style: { marginBottom: 16 } },
+        h('div', { style: S.sectionTitle }, props.title),
         props.children
       )
     }
 
-    /** Collapsible block used for reasoning, tool arguments and tool output. */
-    function Fold(props) {
-      const [open, setOpen] = useState(props.defaultOpen === true)
-      const count = typeof props.chars === 'number' ? props.chars : 0
-      const forceOpen = props.forceOpen
-      const gen = typeof props.gen === 'number' ? props.gen : 0
-      useEffect(
-        function () {
-          if (typeof forceOpen === 'boolean') setOpen(forceOpen)
-        },
-        [gen]
-      )
-      return h(
-        'div',
-        { style: { margin: '6px 0' } },
-        h(
-          'button',
-          {
-            type: 'button',
-            onClick: function () {
-              setOpen(!open)
-            },
-            style: {
-              appearance: 'none',
-              border: '1px solid ' + (props.tone || C.border),
-              background: 'transparent',
-              color: props.color || C.dim,
-              borderRadius: 7,
-              padding: '3px 9px',
-              fontSize: 11.5,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6
-            }
-          },
-          h('span', null, open ? '▾' : '▸'),
-          h('span', null, props.title),
-          count > 0 ? h('span', { style: { color: C.faint } }, fmtBytes(count)) : null
-        ),
-        open
-          ? h(
-              'pre',
-              {
-                style: Object.assign(
-                  {
-                    margin: '6px 0 0',
-                    padding: 10,
-                    background: C.layer,
-                    border: '1px solid ' + C.border,
-                    borderRadius: 8,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    fontFamily: C.mono,
-                    fontSize: 11.5,
-                    lineHeight: 1.5,
-                    maxHeight: 420,
-                    overflow: 'auto'
-                  },
-                  props.preStyle
-                )
-              },
-              props.children
-            )
-          : null
-      )
+    function Empty(props) {
+      return h('div', { style: S.empty }, props.children || '暂无内容')
     }
-
-    function prettyJson(text) {
-      if (typeof text !== 'string' || text === '') return ''
-      try {
-        return JSON.stringify(JSON.parse(text), null, 2)
-      } catch (err) {
-        return text
-      }
-    }
-
-    // ------------------------------------------------------------ markdown
-
-    function escHtml(value) {
-      return String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-    }
-
-    /** 这些属性的数字值本来就无单位，加 px 会让浏览器整条声明作废（line-height:1.62px → 行挤出屏幕）。 */
-    const UNITLESS = {
-      lineHeight: 1,
-      fontWeight: 1,
-      opacity: 1,
-      zIndex: 1,
-      flex: 1,
-      flexGrow: 1,
-      flexShrink: 1,
-      order: 1,
-      zoom: 1,
-      lineClamp: 1,
-      WebkitLineClamp: 1,
-      aspectRatio: 1,
-      tabSize: 1,
-      columnCount: 1,
-      fillOpacity: 1,
-      strokeOpacity: 1,
-      strokeWidth: 1
-    }
-
-    function css(obj) {
-      const parts = []
-      for (const key in obj) {
-        if (!Object.prototype.hasOwnProperty.call(obj, key)) continue
-        const raw = obj[key]
-        if (raw == null || raw === '') continue
-        const value = typeof raw === 'number' ? (UNITLESS[key] ? String(raw) : raw + 'px') : raw
-        parts.push(key.replace(/[A-Z]/g, function (mark) { return '-' + mark.toLowerCase() }) + ':' + value)
-      }
-      return parts.join(';')
-    }
-
-    const MD = {
-      p: { margin: '0 0 8px', lineHeight: 1.62 },
-      h: { fontWeight: 640, margin: '14px 0 6px', lineHeight: 1.4, color: C.text },
-      code: {
-        fontFamily: C.mono,
-        fontSize: 12,
-        background: C.layer2,
-        border: '1px solid ' + C.border,
-        borderRadius: 4,
-        padding: '0 4px'
-      },
-      pre: {
-        margin: '6px 0 10px',
-        padding: 10,
-        background: C.layer,
-        border: '1px solid ' + C.border,
-        borderRadius: 8,
-        overflow: 'auto',
-        fontFamily: C.mono,
-        fontSize: 11.5,
-        lineHeight: 1.5
-      },
-      quote: { margin: '6px 0 10px', padding: '2px 0 2px 10px', borderLeft: '3px solid ' + C.border, color: C.dim },
-      list: { margin: '0 0 8px', paddingLeft: 20 },
-      listNest: { margin: '2px 0 2px', paddingLeft: 18 },
-      li: { margin: '2px 0', lineHeight: 1.6 },
-      hr: { border: 'none', borderTop: '1px solid ' + C.border, margin: '12px 0' },
-      link: { color: C.brand, textDecoration: 'none' },
-      tableWrap: { margin: '6px 0 10px', maxWidth: '100%', overflowX: 'auto' },
-      table: { borderCollapse: 'collapse', fontSize: 12 },
-      cell: { border: '1px solid ' + C.border, padding: '4px 8px', textAlign: 'left', verticalAlign: 'top' },
-      headCell: { border: '1px solid ' + C.border, padding: '4px 8px', textAlign: 'left', fontWeight: 640, background: C.layer2 }
-    }
-
-    const MD_HEAD_SIZE = { 1: 19, 2: 17, 3: 15.5, 4: 14, 5: 13.5, 6: 13 }
-
-    /** Inline markdown: code spans, links, bold, italic, strikethrough. Input is escaped first. */
-    function inlineMd(raw) {
-      const text0 = String(raw == null ? '' : raw)
-      if (text0 === '') return ''
-      const held = []
-      const hold = function (html) {
-        held.push(html)
-        return '\u0000' + (held.length - 1) + '\u0000'
-      }
-      let text = escHtml(text0)
-
-      text = text.replace(/`([^`\n]+)`/g, function (match, code) {
-        return hold('<code style="' + css(MD.code) + '">' + code + '</code>')
-      })
-      text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, function (match, alt) {
-        return hold('<span style="' + css({ color: C.faint }) + '">[图片' + (alt ? ' ' + alt : '') + ']</span>')
-      })
-      text = text.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, function (match, label, href) {
-        if (!/^(https?:|mailto:)/i.test(href)) return label
-        return hold('<a href="' + href + '" target="_blank" rel="noreferrer" style="' + css(MD.link) + '">' + label + '</a>')
-      })
-      text = text.replace(/(^|[\s(])(https?:\/\/[^\s<)\]]+)/g, function (match, lead, href) {
-        return lead + hold('<a href="' + href + '" target="_blank" rel="noreferrer" style="' + css(MD.link) + '">' + href + '</a>')
-      })
-      text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      text = text.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      text = text.replace(/~~([^~]+)~~/g, '<span style="text-decoration:line-through">$1</span>')
-      text = text.replace(/\u0000(\d+)\u0000/g, function (match, index) {
-        return held[Number(index)] || ''
-      })
-      return text
-    }
-
-    function startsBlock(line) {
-      return (
-        /^\s{0,3}(`{3,}|~{3,})/.test(line) ||
-        /^\s{0,3}#{1,6}\s+/.test(line) ||
-        /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line) ||
-        /^\s{0,3}>/.test(line) ||
-        /^\s*([-*+]|\d{1,3}[.)])\s+/.test(line)
-      )
-    }
-
-    function splitRow(row) {
-      return row
-        .replace(/^\s*\|/, '')
-        .replace(/\|\s*$/, '')
-        .split('|')
-        .map(function (cell) {
-          return cell.trim()
-        })
-    }
-
-    const LIST_ITEM = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/
-
-    function indentOf(space) {
-      return space.replace(/\t/g, '  ').length
-    }
-
-    /** A row followed by a | --- | delimiter line starts a table. */
-    function isTableStart(lines, at) {
-      if (at + 1 >= lines.length) return false
-      const next = lines[at + 1]
-      return lines[at].indexOf('|') >= 0 && next.indexOf('-') >= 0 && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(next)
-    }
-
-    function tableAlign(cell) {
-      const left = cell.charAt(0) === ':'
-      const right = cell.charAt(cell.length - 1) === ':'
-      if (left && right) return 'center'
-      if (right) return 'right'
-      return 'left'
-    }
-
-    /**
-     * Parses one list starting at lines[at]. Deeper indents become a real child list
-     * inside the previous item instead of being flattened into one flat <ul>.
-     */
-    function parseList(lines, at, depth) {
-      const first = LIST_ITEM.exec(lines[at])
-      const base = indentOf(first[1])
-      const ordered = /\d/.test(first[2])
-      const start = ordered ? parseInt(first[2], 10) : 1
-      const items = []
-      let index = at
-      while (index < lines.length) {
-        const line = lines[index]
-        if (/^\s*$/.test(line)) {
-          let look = index + 1
-          while (look < lines.length && /^\s*$/.test(lines[look])) look += 1
-          if (look >= lines.length) break
-          const after = LIST_ITEM.exec(lines[look])
-          if (!after || indentOf(after[1]) < base) break
-          index = look
-          continue
-        }
-        const hit = LIST_ITEM.exec(line)
-        if (!hit) {
-          if (items.length > 0 && /^\s{2,}\S/.test(line) && !startsBlock(line)) {
-            items[items.length - 1].html += '<br>' + inlineMd(line.trim())
-            index += 1
-            continue
-          }
-          break
-        }
-        const indent = indentOf(hit[1])
-        if (indent < base) break
-        if (indent > base) {
-          const child = parseList(lines, index, depth + 1)
-          if (child.next === index || items.length === 0) break
-          items[items.length - 1].children.push(child.html)
-          index = child.next
-          continue
-        }
-        if (/\d/.test(hit[2]) !== ordered) break
-        items.push({ html: inlineMd(hit[3]), children: [] })
-        index += 1
-      }
-      return { html: renderList(ordered, start, items, depth), next: index }
-    }
-
-    function renderList(ordered, start, items, depth) {
-      const tag = ordered ? 'ol' : 'ul'
-      const attrs = ordered && start !== 1 ? ' start="' + start + '"' : ''
-      const style = css(depth > 0 ? MD.listNest : MD.list)
-      return (
-        '<' +
-        tag +
-        attrs +
-        ' style="' +
-        style +
-        '">' +
-        items
-          .map(function (item) {
-            return '<li style="' + css(MD.li) + '">' + item.html + item.children.join('') + '</li>'
-          })
-          .join('') +
-        '</' +
-        tag +
-        '>'
-      )
-    }
-
-    /** Small markdown to HTML renderer: headings, fences, lists, quotes, tables, inline styles. */
-    function mdToHtml(source) {
-      const lines = String(source == null ? '' : source).replace(/\r\n?/g, '\n').split('\n')
-      const html = []
-      const blank = function (line) {
-        return /^\s*$/.test(line)
-      }
-      let index = 0
-      while (index < lines.length) {
-        const line = lines[index]
-        if (blank(line)) {
-          index += 1
-          continue
-        }
-
-        const fence = /^\s{0,3}(`{3,}|~{3,})\s*([\w+#.-]*)\s*$/.exec(line)
-        if (fence) {
-          const marker = fence[1]
-          const body = []
-          index += 1
-          while (index < lines.length && lines[index].trim().indexOf(marker) !== 0) {
-            body.push(lines[index])
-            index += 1
-          }
-          if (index < lines.length) index += 1
-          html.push('<pre style="' + css(MD.pre) + '"><code>' + escHtml(body.join('\n')) + '</code></pre>')
-          continue
-        }
-
-        const heading = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
-        if (heading) {
-          const level = heading[1].length
-          // 首块不留上边距，否则每条消息开头都会空一大截
-          const margin = html.length === 0 ? '0 0 6px' : '14px 0 6px'
-          html.push(
-            '<div style="' +
-              css(Object.assign({}, MD.h, { margin: margin, fontSize: MD_HEAD_SIZE[level] })) +
-              '">' +
-              inlineMd(heading[2]) +
-              '</div>'
-          )
-          index += 1
-          continue
-        }
-
-        if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
-          html.push('<hr style="' + css(MD.hr) + '">')
-          index += 1
-          continue
-        }
-
-        if (/^\s{0,3}>/.test(line)) {
-          const body = []
-          while (index < lines.length && /^\s{0,3}>/.test(lines[index])) {
-            body.push(lines[index].replace(/^\s{0,3}>\s?/, ''))
-            index += 1
-          }
-          html.push(
-            '<div style="' +
-              css(MD.quote) +
-              '">' +
-              body
-                .map(inlineMd)
-                .join('<br>') +
-              '</div>'
-          )
-          continue
-        }
-
-        if (isTableStart(lines, index)) {
-          const head = splitRow(line)
-          const aligns = splitRow(lines[index + 1]).map(tableAlign)
-          index += 2
-          const rows = []
-          while (index < lines.length && lines[index].indexOf('|') >= 0 && !blank(lines[index])) {
-            rows.push(splitRow(lines[index]))
-            index += 1
-          }
-          const cellStyle = function (at, extra) {
-            return css(Object.assign({}, extra, { textAlign: aligns[at] || 'left' }))
-          }
-          html.push(
-            '<div style="' +
-              css(MD.tableWrap) +
-              '"><table style="' +
-              css(MD.table) +
-              '"><thead><tr>' +
-              head
-                .map(function (cell, at) {
-                  return '<th style="' + cellStyle(at, MD.headCell) + '">' + inlineMd(cell) + '</th>'
-                })
-                .join('') +
-              '</tr></thead><tbody>' +
-              rows
-                .map(function (row) {
-                  const cells = []
-                  for (let at = 0; at < Math.max(head.length, row.length); at += 1) {
-                    cells.push('<td style="' + cellStyle(at, MD.cell) + '">' + inlineMd(row[at] == null ? '' : row[at]) + '</td>')
-                  }
-                  return '<tr>' + cells.join('') + '</tr>'
-                })
-                .join('') +
-              '</tbody></table></div>'
-          )
-          continue
-        }
-
-        if (LIST_ITEM.test(line)) {
-          const list = parseList(lines, index, 0)
-          html.push(list.html)
-          index = list.next
-          continue
-        }
-
-        const para = [inlineMd(line)]
-        index += 1
-        while (index < lines.length && !blank(lines[index]) && !startsBlock(lines[index]) && !isTableStart(lines, index)) {
-          para.push(inlineMd(lines[index]))
-          index += 1
-        }
-        html.push('<div style="' + css(MD.p) + '">' + para.join('<br>') + '</div>')
-      }
-      return html.join('')
-    }
-
-    /** Renders markdown produced on the peer machine. */
-    function Md(props) {
-      const html = useMemo(
-        function () {
-          return mdToHtml(props.text)
-        },
-        [props.text]
-      )
-      return h('div', {
-        style: { lineHeight: 1.62, fontSize: 13, wordBreak: 'break-word' },
-        dangerouslySetInnerHTML: { __html: html }
-      })
-    }
-
-    // ---------------------------------------------------------- transcript
-
-    function Block(props) {
-      const block = props.block
-      const think = props.think
-      if (block.k === 'reasoning') {
-        return h(
-          Fold,
-          {
-            title: '思考链',
-            chars: block.text.length,
-            tone: C.warn,
-            color: C.warn,
-            defaultOpen: false,
-            forceOpen: think ? think.open : undefined,
-            gen: think ? think.gen : 0
-          },
-          block.text
-        )
-      }
-      if (block.k === 'tool-call') {
-        return h(
-          'div',
-          { style: { margin: '6px 0' } },
-          h(
-            'div',
-            { style: { fontSize: 11.5, color: C.brand, fontFamily: C.mono, marginBottom: 2 } },
-            '⚙ ' + block.name + (block.id ? '  ' + String(block.id).slice(0, 14) : '')
-          ),
-          h(Fold, { title: '调用参数', chars: block.args.length, defaultOpen: false }, prettyJson(block.args))
-        )
-      }
-      if (block.k === 'image') {
-        return h('div', { style: S.faint }, '[图片 ' + (block.note || '') + ']')
-      }
-      return h('div', { style: { margin: '4px 0' } }, h(Md, { text: block.text }))
-    }
-
-    function TranscriptItem(props) {
-      const item = props.item
-      const think = props.think
-      if (item.t === 'turn') {
-        return h(
-          'div',
-          { style: { display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0 6px' } },
-          h('div', { style: { flex: 1, height: 1, background: C.border } }),
-          h('span', { style: { fontSize: 11, color: C.faint } }, '第 ' + item.n + ' 轮'),
-          h('div', { style: { flex: 1, height: 1, background: C.border } })
-        )
-      }
-      if (item.t === 'step') {
-        return h('div', { style: { fontSize: 11, color: C.faint, margin: '8px 0 2px' } }, 'step ' + String(item.n))
-      }
-      if (item.t === 'user') {
-        const approval = item.source && item.source !== 'user'
-        return h(
-          'div',
-          {
-            style: {
-              margin: '10px 0',
-              padding: '9px 12px',
-              borderRadius: 10,
-              border: '1px solid ' + C.border,
-              background: approval ? 'transparent' : C.layer2
-            }
-          },
-          h(
-            'div',
-            { style: { fontSize: 11, color: approval ? C.faint : C.brand, marginBottom: 4 } },
-            approval ? '系统 · ' + item.source : '我'
-          ),
-          h(
-            'div',
-            { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.62, fontSize: 13 } },
-            item.text
-          )
-        )
-      }
-      if (item.t === 'assistant') {
-        return h(
-          'div',
-          { style: { margin: '8px 0 10px' } },
-          h('div', { style: { fontSize: 11, color: C.dim, marginBottom: 2 } }, '助手'),
-          (item.blocks || []).map(function (block, index) {
-            return h(Block, { key: 'b' + index, block: block, think: think })
-          })
-        )
-      }
-      if (item.t === 'tool-result') {
-        return h(
-          'div',
-          { style: { margin: '4px 0 10px 12px' } },
-          h(
-            Fold,
-            {
-              title: (item.isError ? '✕ 工具输出（错误）' : '✓ 工具输出') + (item.callId ? '  ' + String(item.callId).slice(0, 14) : ''),
-              chars: (item.text || '').length,
-              tone: item.isError ? C.err : C.ok,
-              color: item.isError ? C.err : C.ok,
-              defaultOpen: item.isError === true
-            },
-            item.text || ''
-          )
-        )
-      }
-      if (item.t === 'system') {
-        return h(Fold, { title: '系统提示', chars: item.text.length }, item.text)
-      }
-      if (item.t === 'command') {
-        return h('div', { style: { fontSize: 11.5, color: C.dim, fontFamily: C.mono, margin: '4px 0' } }, '/ ' + item.name + ' ' + item.args)
-      }
-      return null
-    }
-
-    function ConversationView(props) {
-      const conversation = props.conversation
-      const items = conversation.items || []
-      const [think, setThink] = useState({ open: false, gen: 0 })
-      const thinkCount = items.reduce(function (total, item) {
-        if (item.t !== 'assistant') return total
-        return (
-          total +
-          (item.blocks || []).filter(function (block) {
-            return block.k === 'reasoning'
-          }).length
-        )
-      }, 0)
-      const wrap = useRef(null)
-      useEffect(
-        function () {
-          if (wrap.current) wrap.current.scrollTop = 0
-        },
-        [conversation.sessionId]
-      )
-      return h(
-        'div',
-        { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 } },
-        h(
-          'div',
-          { style: { padding: '10px 16px', borderBottom: '1px solid ' + C.border, flexShrink: 0 } },
-          h('div', { style: { fontWeight: 600, fontSize: 13.5, wordBreak: 'break-word' } }, conversation.title || '(无标题)'),
-          h(
-            'div',
-            { style: Object.assign({}, S.faint, { marginTop: 3, display: 'flex', gap: 10, flexWrap: 'wrap' }) },
-            h('span', null, '来自 ' + (conversation.machineName || conversation.machineId)),
-            h('span', null, fmtTime(conversation.updatedAt)),
-            h('span', null, items.length + ' 段'),
-            conversation.cwd ? h('span', { style: { fontFamily: C.mono } }, conversation.cwd) : null
-          ),
-          h(
-            'div',
-            { style: { marginTop: 7, display: 'flex', gap: 8, alignItems: 'center' } },
-            h(
-              'button',
-              {
-                type: 'button',
-                disabled: thinkCount === 0,
-                onClick: function () {
-                  setThink(function (prev) {
-                    return { open: !prev.open, gen: prev.gen + 1 }
-                  })
-                },
-                style: Object.assign({}, S.btn, {
-                  padding: '2px 9px',
-                  fontSize: 11,
-                  opacity: thinkCount === 0 ? 0.45 : 1,
-                  cursor: thinkCount === 0 ? 'default' : 'pointer'
-                }),
-                title: '一键折叠或展开本次对话的全部思考链'
-              },
-              think.open ? '折叠全部思考' : '展开全部思考'
-            ),
-            h(
-              'span',
-              { style: S.faint },
-              thinkCount === 0 ? '本次对话没有思考内容' : thinkCount + ' 段思考链 · 正文按 Markdown 渲染'
-            )
-          )
-        ),
-        h(
-          'div',
-          { ref: wrap, style: Object.assign({}, S.scroll, { flex: 1, padding: '4px 18px 40px' }) },
-          items.length === 0 ? h('div', { style: S.muted }, '这条会话还没有可显示的内容。') : items.map(function (item, index) {
-            return h(TranscriptItem, { key: 'i' + index, item: item, think: think })
-          })
-        )
-      )
-    }
-
-    // ------------------------------------------------------------- 对话 tab
-
-    function ConversationsTab(props) {
-      const status = props.status
-      const [rows, setRows] = useState([])
-      const [loading, setLoading] = useState(false)
-      const [error, setError] = useState('')
-      const [query, setQuery] = useState('')
-      const [machine, setMachine] = useState('')
-      const [open, setOpen] = useState(null)
-      const [conversation, setConversation] = useState(null)
-      const [convError, setConvError] = useState('')
-      const [workspaces, setWorkspaces] = useState([])
-      const [target, setTarget] = useState('')
-      const [forking, setForking] = useState(false)
-      const [forkNote, setForkNote] = useState('')
-      const [forkError, setForkError] = useState('')
-
-      const load = useCallback(function () {
-        setLoading(true)
-        const params = []
-        if (machine) params.push('machine=' + encodeURIComponent(machine))
-        if (query.trim()) params.push('q=' + encodeURIComponent(query.trim()))
-        api('/conversations' + (params.length ? '?' + params.join('&') : ''))
-          .then(function (body) {
-            setRows(body.conversations || [])
-            setError('')
-          })
-          .catch(function (err) {
-            setError(String(err.message || err))
-          })
-          .finally(function () {
-            setLoading(false)
-          })
-      }, [machine, query])
-
-      useEffect(
-        function () {
-          load()
-        },
-        [load, props.tick]
-      )
-
-      const openConversation = function (row) {
-        setOpen(row)
-        setConversation(null)
-        setConvError('')
-        setForkNote('')
-        setForkError('')
-        api('/conversation?machine=' + encodeURIComponent(row.machineId) + '&id=' + encodeURIComponent(row.sessionId))
-          .then(function (body) {
-            setConversation(body.conversation)
-          })
-          .catch(function (err) {
-            setConvError(String(err.message || err))
-          })
-      }
-
-      useEffect(
-        function () {
-          api('/workspaces')
-            .then(function (body) {
-              const list = body.workspaces || []
-              setWorkspaces(list)
-              setTarget(function (previous) {
-                if (previous && list.some(function (row) { return row.key === previous })) return previous
-                return list.length > 0 ? list[0].key : ''
-              })
-            })
-            .catch(function () {
-              setWorkspaces([])
-            })
-        },
-        [props.tick]
-      )
-
-      const doFork = function () {
-        if (!open || !conversation) return
-        setForking(true)
-        setForkNote('')
-        setForkError('')
-        api('/fork', { method: 'POST', body: { machine: open.machineId, id: open.sessionId, workspace: target } })
-          .then(function (body) {
-            const result = (body && body.fork) || {}
-            const rounds = String(result.turns || 0)
-            const name = result.title || ''
-            setForkNote(
-              result.attached
-                ? '已挂进工作区 ' + (result.cwd || '') + '（' + rounds + ' 轮）。刷新一下页面，侧栏里就能看到「' + name + '」。'
-                : '已写入 ' + (result.cwd || '') + '（' + rounds + ' 轮）。重启 DSH 后侧栏里就能看到「' + name + '」，点开继续聊。'
-            )
-
-          })
-          .catch(function (err) {
-            setForkError(String(err.message || err))
-          })
-          .finally(function () {
-            setForking(false)
-          })
-      }
-
-      const machines = (status && status.machines) || []
-      // 对端可能只留下一条空会话（没有一条 user/assistant 消息），那种 fork 不出来。
-      const emptyConversation = Boolean(conversation) && (!Array.isArray(conversation.items) || conversation.items.length === 0)
-
-      return h(
-        'div',
-        { style: { display: 'flex', flex: 1, minHeight: 0 } },
-        h(
-          'div',
-          {
-            style: {
-              width: 300,
-              flexShrink: 0,
-              borderRight: '1px solid ' + C.border,
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0
-            }
-          },
-          h(
-            'div',
-            { style: { padding: 10, borderBottom: '1px solid ' + C.border, display: 'flex', flexDirection: 'column', gap: 6 } },
-            h('input', {
-              style: S.input,
-              placeholder: '搜索标题或路径',
-              value: query,
-              onChange: function (event) {
-                setQuery(event.target.value)
-              }
-            }),
-            h(
-              'select',
-              {
-                style: S.input,
-                value: machine,
-                onChange: function (event) {
-                  setMachine(event.target.value)
-                }
-              },
-              h('option', { value: '' }, '全部电脑'),
-              machines.map(function (row) {
-                return h('option', { key: row.machineId, value: row.machineId }, row.machineName + ' (' + row.conversations + ')')
-              })
-            ),
-            h(
-              'div',
-              { style: Object.assign({}, S.faint, { display: 'flex', justifyContent: 'space-between' }) },
-              h('span', null, loading ? '读取中…' : rows.length + ' 条会话'),
-              h(Btn, { onClick: load, style: { padding: '2px 8px', fontSize: 11 } }, '刷新')
-            ),
-            error ? h('div', { style: S.err }, error) : null
-          ),
-          h(
-            'div',
-            { style: Object.assign({}, S.scroll, { flex: 1 }) },
-            rows.length === 0
-              ? h('div', { style: Object.assign({}, S.muted, { padding: 14 }) }, '还没有同步到任何会话。在另一台电脑上提问后，等几秒或点「立即同步」。')
-              : rows.map(function (row) {
-                  const active = open && open.sessionId === row.sessionId
-                  return h(
-                    'button',
-                    {
-                      key: row.machineId + '/' + row.sessionId,
-                      type: 'button',
-                      onClick: function () {
-                        openConversation(row)
-                      },
-                      style: {
-                        appearance: 'none',
-                        textAlign: 'left',
-                        width: '100%',
-                        border: 'none',
-                        borderBottom: '1px solid ' + C.border,
-                        background: active ? C.layer2 : 'transparent',
-                        color: C.text,
-                        padding: '9px 11px',
-                        cursor: 'pointer',
-                        fontFamily: 'inherit',
-                        display: 'block'
-                      }
-                    },
-                    h(
-                      'div',
-                      { style: { fontSize: 12.5, lineHeight: 1.4, wordBreak: 'break-word' } },
-                      row.title || '(无标题)'
-                    ),
-                    h(
-                      'div',
-                      { style: Object.assign({}, S.faint, { marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }) },
-                      row.mine ? h('span', { style: { color: C.ok } }, '本机') : h('span', null, row.machineName || row.machineId),
-                      h('span', null, fmtTime(row.updatedAt)),
-                      h('span', null, String(row.items) + ' 段')
-                    )
-                  )
-                })
-          )
-        ),
-        open
-          ? h(
-              'div',
-              { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 } },
-              h(
-                'div',
-                {
-                  style: {
-                    padding: '8px 12px',
-                    borderBottom: '1px solid ' + C.border,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    flexWrap: 'wrap'
-                  }
-                },
-                h('span', { style: { fontSize: 11.5, color: C.dim } }, 'Fork 到本机工作区'),
-                h(
-                  'select',
-                  {
-                    style: Object.assign({}, S.input, { width: 260, marginBottom: 0 }),
-                    value: target,
-                    onChange: function (event) {
-                      setTarget(event.target.value)
-                    }
-                  },
-                  workspaces.length === 0
-                    ? h('option', { value: '' }, '本机没有可用工作区')
-                    : workspaces.map(function (row) {
-                        return h(
-                          'option',
-                          { key: row.key, value: row.key },
-                          row.cwd + ' · ' + String(row.sessions) + ' 条会话'
-                        )
-                      })
-                ),
-                h(
-                  Btn,
-                  { primary: true, disabled: forking || emptyConversation || !conversation || !target, onClick: doFork },
-                  forking ? '写入中…' : 'Fork'
-                ),
-                emptyConversation
-                  ? h('span', { style: { fontSize: 11.5, color: C.dim } }, '这条会话是空的，没有可 fork 的内容')
-                  : null,
-                forkNote ? h('span', { style: S.ok }, forkNote) : null,
-                forkError ? h('span', { style: S.err }, forkError) : null
-              ),
-              convError
-                ? h('div', { style: { padding: 16 } }, h('div', { style: S.err }, convError))
-                : conversation
-                  ? h(ConversationView, { conversation })
-                  : h('div', { style: { padding: 16, color: C.dim } }, '读取中…')
-            )
-          : h(
-              'div',
-              { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 30 } },
-              h(
-                'div',
-                { style: { maxWidth: 420, textAlign: 'center' } },
-                h('div', { style: { fontSize: 14, marginBottom: 8 } }, '选择左侧任意一条会话'),
-                h(
-                  'div',
-                  { style: S.muted },
-                  '这里显示的是完整过程：思考链、每一次工具调用与返回、以及最终回答。内容来自所有已连接电脑的共享区。'
-                )
-              )
-            )
-      )
-    }
-
-    // ------------------------------------------------------------- 插件 tab
-
-    function PluginsTab(props) {
-      const [data, setData] = useState(null)
-      const [error, setError] = useState('')
-      const [busy, setBusy] = useState('')
-      const [message, setMessage] = useState('')
-
-      const load = useCallback(function () {
-        api('/plugins')
-          .then(function (body) {
-            setData(body)
-            setError('')
-          })
-          .catch(function (err) {
-            setError(String(err.message || err))
-          })
-      }, [])
-
-      useEffect(
-        function () {
-          load()
-        },
-        [load, props.tick]
-      )
-
-      const run = function (label, promise) {
-        setBusy(label)
-        setMessage('')
-        promise
-          .then(function (result) {
-            setMessage(label + '：' + JSON.stringify(result && result.result ? result.result : result).slice(0, 300))
-            load()
-          })
-          .catch(function (err) {
-            setMessage(label + ' 失败：' + String(err.message || err))
-          })
-          .finally(function () {
-            setBusy('')
-          })
-      }
-
-      if (!data) {
-        return h('div', { style: { padding: 16 } }, error ? h('div', { style: S.err }, error) : h('div', { style: S.muted }, '读取中…'))
-      }
-
-      const local = data.local || {}
-      const remote = data.remote || []
-      const plans = data.plans || []
-      const runtime = data.runtime || []
-
-      return h(
-        'div',
-        { style: Object.assign({}, S.scroll, { flex: 1, padding: 14 }) },
-        error ? h('div', { style: Object.assign({}, S.err, { marginBottom: 10 }) }, error) : null,
-        message ? h('div', { style: Object.assign({}, S.ok, { marginBottom: 10 }) }, message) : null,
-        h(
-          'div',
-          { style: Object.assign({}, S.card, { marginBottom: 14 }) },
-          h(
-            'div',
-            { style: Object.assign({}, S.row, { justifyContent: 'space-between', marginBottom: 8 }) },
-            h('div', { style: { fontWeight: 600 } }, '本机插件清单 · ' + (local.machineName || '')),
-            h(Btn, { onClick: load }, '刷新')
-          ),
-          h(
-            'div',
-            { style: Object.assign({}, S.faint, { marginBottom: 10 }) },
-            local.profileDir + ' · ' + (local.pluginCount || 0) + ' 个依赖 · ' + ((local.bundles || []).length) + ' 个 bundle'
-          ),
-          h(
-            'div',
-            { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-            (local.plugins || []).map(function (row) {
-              const state = row.runtime
-              return h(
-                'span',
-                {
-                  key: row.name,
-                  style: Object.assign({}, S.badge, state && state.enabled ? { borderColor: C.ok, color: C.ok } : null),
-                  title: row.name + ' ' + row.version
-                },
-                h('span', { style: Object.assign({}, S.dot, { background: state ? (state.enabled ? C.ok : C.faint) : C.faint }) }),
-                row.name.replace(/^@[^/]+\//, '')
-              )
-            })
-          )
-        ),
-        h(
-          'div',
-          { style: Object.assign({}, S.card, { marginBottom: 14 }) },
-          h('div', { style: { fontWeight: 600, marginBottom: 8 } }, '其他电脑的清单 · 一键同步'),
-          remote.length === 0
-            ? h('div', { style: S.muted }, '还没有收到其他电脑的插件清单。确保对方已完成配对并同步一次。')
-            : remote.map(function (entry) {
-                const planRow = plans.find(function (row) {
-                  return row.machineId === entry.machineId
-                })
-                const plan = (planRow && planRow.plan) || null
-                return h(
-                  'div',
-                  { key: entry.machineId, style: { borderTop: '1px solid ' + C.border, paddingTop: 10, marginTop: 10 } },
-                  h(
-                    'div',
-                    { style: Object.assign({}, S.row, { justifyContent: 'space-between' }) },
-                    h('div', null, entry.machineName || entry.machineId, ' · ', h('span', { style: S.faint }, entry.pluginCount + ' 个插件')),
-                    plan
-                      ? h(
-                          Btn,
-                          {
-                            primary: true,
-                            disabled: plan.identical || Boolean(busy),
-                            onClick: function () {
-                              run('应用清单', api('/plugins/apply', { method: 'POST', body: { machineId: entry.machineId } }))
-                            }
-                          },
-                          plan.identical ? '已一致' : '一键应用'
-                        )
-                      : null
-                  ),
-                  plan
-                    ? h(
-                        'div',
-                        { style: Object.assign({}, S.faint, { marginTop: 6, lineHeight: 1.6 }) },
-                        plan.missing.length > 0 ? h('div', null, '待安装：' + plan.missing.map(function (row) { return row.name }).join('、')) : null,
-                        plan.versionDiff.length > 0
-                          ? h('div', null, '版本不同：' + plan.versionDiff.map(function (row) { return row.name + ' ' + row.local + ' → ' + row.remote }).join('、'))
-                          : null,
-                        plan.bundlesToAdd.length > 0 ? h('div', null, '待启用 bundle：' + plan.bundlesToAdd.join('、')) : null,
-                        plan.identical ? h('div', { style: { color: C.ok } }, '与本机完全一致') : null
-                      )
-                    : null
-                )
-              })
-        ),
-        h(
-          'div',
-          { style: Object.assign({}, S.card, { marginBottom: 14 }) },
-          h('div', { style: { fontWeight: 600, marginBottom: 8 } }, '安装与运行'),
-          h(
-            'div',
-            { style: Object.assign({}, S.muted, { marginBottom: 8 }) },
-            '应用清单只会改写 profile 的 package.json，不会自动联网安装。确认后用下面的按钮跑 pnpm install。'
-          ),
-          h(
-            'div',
-            { style: S.row },
-            h(
-              Btn,
-              {
-                disabled: Boolean(busy),
-                onClick: function () {
-                  run('pnpm install', api('/plugins/install', { method: 'POST', body: {} }))
-                }
-              },
-              busy === 'pnpm install' ? '安装中…' : '运行 pnpm install'
-            ),
-            h('span', { style: S.faint }, '首次可能需要几分钟')
-          )
-        ),
-        h(
-          'div',
-          { style: S.card },
-          h('div', { style: { fontWeight: 600, marginBottom: 8 } }, '已加载的运行时插件 · 启用/停用'),
-          runtime.length === 0
-            ? h('div', { style: S.muted }, '当前宿主没有暴露插件管理器。')
-            : runtime.map(function (row) {
-                return h(
-                  'div',
-                  {
-                    key: row.entryId,
-                    style: Object.assign({}, S.row, {
-                      justifyContent: 'space-between',
-                      borderTop: '1px solid ' + C.border,
-                      padding: '6px 0'
-                    })
-                  },
-                  h(
-                    'div',
-                    { style: { minWidth: 0 } },
-                    h('div', { style: Object.assign({}, S.mono, { overflow: 'hidden', textOverflow: 'ellipsis' }) }, row.name),
-                    h('div', { style: S.faint }, row.patchId || row.entryId)
-                  ),
-                  h(
-                    Btn,
-                    {
-                      disabled: Boolean(busy) || row.readOnly,
-                      onClick: function () {
-                        run('切换 ' + row.name, api('/plugins/toggle', { method: 'POST', body: { entryId: row.entryId, enabled: !row.enabled } }))
-                      }
-                    },
-                    row.enabled ? '已启用' : '已停用'
-                  )
-                )
-              })
-        )
-      )
-    }
-
-    // ------------------------------------------------------------- 文件 tab
-
-    function FilesTab(props) {
-      const status = props.status
-      const [scope, setScope] = useState('local')
-      const [remoteRoots, setRemoteRoots] = useState([])
-      const [rootId, setRootId] = useState('')
-      const [currentPath, setCurrentPath] = useState('')
-      const [listing, setListing] = useState(null)
-      const [error, setError] = useState('')
-      const [file, setFile] = useState(null)
-      const [draft, setDraft] = useState('')
-      const [dirty, setDirty] = useState(false)
-      const [message, setMessage] = useState('')
-
-      const localRoots = (status && status.roots) || []
-      const roots = scope === 'remote' ? remoteRoots : localRoots
-
-      useEffect(
-        function () {
-          if (scope !== 'remote') return
-          api('/roots?scope=remote')
-            .then(function (body) {
-              setRemoteRoots(body.roots || [])
-              setError('')
-            })
-            .catch(function (err) {
-              setRemoteRoots([])
-              setError(String(err.message || err))
-            })
-        },
-        [scope, props.tick]
-      )
-
-      useEffect(
-        function () {
-          if (roots.length === 0) {
-            setRootId('')
-            return
-          }
-          const exists = roots.some(function (row) {
-            return row.id === rootId
-          })
-          if (!exists) setRootId(roots[0].id)
-        },
-        [roots.length, scope]
-      )
-
-      const loadDir = useCallback(
-        function (rel) {
-          if (!rootId) return
-          api(
-            '/files/list?scope=' + scope + '&root=' + encodeURIComponent(rootId) + '&path=' + encodeURIComponent(rel || '')
-          )
-            .then(function (body) {
-              setListing(body)
-              setCurrentPath(rel || '')
-              setError('')
-            })
-            .catch(function (err) {
-              setError(String(err.message || err))
-            })
-        },
-        [rootId, scope]
-      )
-
-      useEffect(
-        function () {
-          if (rootId) loadDir('')
-        },
-        [rootId, scope]
-      )
-
-      const openFile = function (name) {
-        const rel = currentPath ? currentPath + '/' + name : name
-        api('/files/read?scope=' + scope + '&root=' + encodeURIComponent(rootId) + '&path=' + encodeURIComponent(rel))
-          .then(function (body) {
-            setFile({ path: rel, binary: body.binary, size: body.size })
-            setDraft(body.content || '')
-            setDirty(false)
-            setMessage('')
-            setError('')
-          })
-          .catch(function (err) {
-            setError(String(err.message || err))
-          })
-      }
-
-      const save = function () {
-        if (!file) return
-        api('/files/write', {
-          method: 'POST',
-          body: { scope, root: rootId, path: file.path, content: draft, backup: true }
-        })
-          .then(function () {
-            setDirty(false)
-            setMessage('已保存 ' + file.path)
-            loadDir(currentPath)
-          })
-          .catch(function (err) {
-            setError(String(err.message || err))
-          })
-      }
-
-      const crumbs = currentPath === '' ? [] : currentPath.split('/')
-
-      return h(
-        'div',
-        { style: { display: 'flex', flex: 1, minHeight: 0 } },
-        h(
-          'div',
-          { style: { width: 320, flexShrink: 0, borderRight: '1px solid ' + C.border, display: 'flex', flexDirection: 'column', minHeight: 0 } },
-          h(
-            'div',
-            { style: { padding: 10, borderBottom: '1px solid ' + C.border, display: 'flex', flexDirection: 'column', gap: 6 } },
-            h(
-              'div',
-              { style: { display: 'flex', gap: 4 } },
-              h(
-                Btn,
-                { onClick: function () { setScope('local') }, style: scope === 'local' ? { borderColor: C.brand, color: C.brand } : null },
-                '本机'
-              ),
-              h(
-                Btn,
-                { onClick: function () { setScope('remote') }, style: scope === 'remote' ? { borderColor: C.brand, color: C.brand } : null },
-                '对端'
-              )
-            ),
-            h(
-              'select',
-              {
-                style: S.input,
-                value: rootId,
-                onChange: function (event) {
-                  setRootId(event.target.value)
-                }
-              },
-              roots.length === 0 ? h('option', { value: '' }, '没有共享的根目录') : null,
-              roots.map(function (row) {
-                return h('option', { key: row.id, value: row.id }, row.label + ' · ' + (row.path || row.kind))
-              })
-            ),
-            h(
-              'div',
-              { style: Object.assign({}, S.faint, { display: 'flex', gap: 6, flexWrap: 'wrap' }) },
-              h(
-                'button',
-                {
-                  type: 'button',
-                  onClick: function () { loadDir('') },
-                  style: { appearance: 'none', background: 'transparent', border: 'none', color: C.dim, cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: 11 }
-                },
-                '根目录'
-              ),
-              crumbs.map(function (segment, index) {
-                const rel = crumbs.slice(0, index + 1).join('/')
-                return h(
-                  'button',
-                  {
-                    key: rel,
-                    type: 'button',
-                    onClick: function () { loadDir(rel) },
-                    style: { appearance: 'none', background: 'transparent', border: 'none', color: C.dim, cursor: 'pointer', padding: 0, fontFamily: C.mono, fontSize: 11 }
-                  },
-                  '/ ' + segment
-                )
-              })
-            ),
-            error ? h('div', { style: S.err }, error) : null
-          ),
-          h(
-            'div',
-            { style: Object.assign({}, S.scroll, { flex: 1 }) },
-            listing && listing.entries
-              ? listing.entries.map(function (entry) {
-                  return h(
-                    'button',
-                    {
-                      key: entry.path,
-                      type: 'button',
-                      onClick: function () {
-                        if (entry.dir) loadDir(entry.path)
-                        else openFile(entry.name)
-                      },
-                      style: {
-                        appearance: 'none',
-                        width: '100%',
-                        textAlign: 'left',
-                        border: 'none',
-                        borderBottom: '1px solid ' + C.border,
-                        background: 'transparent',
-                        color: entry.denied ? C.faint : C.text,
-                        padding: '7px 11px',
-                        cursor: 'pointer',
-                        fontFamily: 'inherit',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: 8
-                      }
-                    },
-                    h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, (entry.dir ? '📁 ' : '') + entry.name),
-                    h('span', { style: S.faint }, entry.dir ? '' : fmtBytes(entry.size))
-                  )
-                })
-              : h('div', { style: Object.assign({}, S.muted, { padding: 14 }) }, scope === 'remote' ? '选择对端的共享目录' : '选择共享目录')
-          )
-        ),
-        h(
-          'div',
-          { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 } },
-          file
-            ? h(
-                React.Fragment,
-                null,
-                h(
-                  'div',
-                  { style: { padding: '8px 12px', borderBottom: '1px solid ' + C.border, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-                  h('span', { style: Object.assign({}, S.mono, { flex: 1, minWidth: 120, wordBreak: 'break-all' }) }, file.path),
-                  file.binary ? h('span', { style: { color: C.warn, fontSize: 12 } }, '二进制文件，不可编辑') : null,
-                  h(Btn, { primary: true, disabled: !dirty || file.binary, onClick: save }, dirty ? '保存' : '已保存'),
-                  h(
-                    Btn,
-                    {
-                      onClick: function () {
-                        setFile(null)
-                        setDraft('')
-                        setDirty(false)
-                      }
-                    },
-                    '关闭'
-                  ),
-                  message ? h('span', { style: S.ok }, message) : null
-                ),
-                h('textarea', {
-                  value: draft,
-                  spellCheck: false,
-                  readOnly: file.binary,
-                  onChange: function (event) {
-                    setDraft(event.target.value)
-                    setDirty(true)
-                  },
-                  style: {
-                    flex: 1,
-                    minHeight: 0,
-                    resize: 'none',
-                    border: 'none',
-                    outline: 'none',
-                    background: 'transparent',
-                    color: C.text,
-                    padding: 12,
-                    fontFamily: C.mono,
-                    fontSize: 12,
-                    lineHeight: 1.6
-                  }
-                })
-              )
-            : h(
-                'div',
-                { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 30 } },
-                h('div', { style: Object.assign({}, S.muted, { textAlign: 'center', maxWidth: 400 }) }, '从左侧选择文件即可查看和编辑；保存会先写临时文件再替换，并保留一份备份。')
-              )
-        )
-      )
-    }
-
-    // ------------------------------------------------------------- 记忆 tab
-
-    function MemoryTab(props) {
-      const [data, setData] = useState(null)
-      const [error, setError] = useState('')
-      const [message, setMessage] = useState('')
-
-      const load = useCallback(function () {
-        api('/memory')
-          .then(function (body) {
-            setData(body)
-            setError('')
-          })
-          .catch(function (err) {
-            setError(String(err.message || err))
-          })
-      }, [])
-
-      useEffect(
-        function () {
-          load()
-        },
-        [load, props.tick]
-      )
-
-      if (!data) return h('div', { style: { padding: 16 } }, error ? h('div', { style: S.err }, error) : h('div', { style: S.muted }, '读取中…'))
-
-      const local = data.local || []
-      const shared = data.shared || []
-
-      const take = function (row) {
-        const target = local.find(function (entry) {
-          return entry.name === row.name
-        })
-        if (!target) {
-          setMessage('本机没有 ' + row.name + '，请先在设置里指定一个路径。')
-          return
-        }
-        api('/memory/write', { method: 'POST', body: { file: target.file, text: row.text } })
-          .then(function () {
-            setMessage('已用 ' + row.name + '（来自 ' + row.machineId + '）覆盖本机，原文件已备份')
-            load()
-          })
-          .catch(function (err) {
-            setMessage('失败：' + String(err.message || err))
-          })
-      }
-
-      return h(
-        'div',
-        { style: Object.assign({}, S.scroll, { flex: 1, padding: 14 }) },
-        error ? h('div', { style: Object.assign({}, S.err, { marginBottom: 10 }) }, error) : null,
-        message ? h('div', { style: Object.assign({}, S.ok, { marginBottom: 10 }) }, message) : null,
-        h(
-          'div',
-          { style: Object.assign({}, S.card, { marginBottom: 14 }) },
-          h('div', { style: { fontWeight: 600, marginBottom: 8 } }, '本机找到的记忆文件'),
-          local.length === 0
-            ? h(
-                'div',
-                { style: S.muted },
-                '没有在常规位置找到 MEMORY.md / USER.md。如果你的记忆由别的插件托管，可在下面的共享区里手动对照内容。'
-              )
-            : local.map(function (entry) {
-                return h(
-                  'div',
-                  { key: entry.file, style: { borderTop: '1px solid ' + C.border, padding: '6px 0' } },
-                  h('div', { style: S.mono }, entry.name),
-                  h('div', { style: S.faint }, entry.file + ' · ' + fmtBytes(entry.size))
-                )
-              })
-        ),
-        h(
-          'div',
-          { style: S.card },
-          h(
-            'div',
-            { style: Object.assign({}, S.row, { justifyContent: 'space-between', marginBottom: 8 }) },
-            h('div', { style: { fontWeight: 600 } }, '共享区里的记忆'),
-            h(Btn, { onClick: load }, '刷新')
-          ),
-          shared.length === 0
-            ? h('div', { style: S.muted }, '还没有同步到记忆文件。')
-            : shared.map(function (row) {
-                return h(
-                  'div',
-                  { key: row.machineId + '/' + row.name, style: { borderTop: '1px solid ' + C.border, paddingTop: 10, marginTop: 10 } },
-                  h(
-                    'div',
-                    { style: Object.assign({}, S.row, { justifyContent: 'space-between' }) },
-                    h(
-                      'div',
-                      null,
-                      h('span', { style: { fontWeight: 600 } }, row.name),
-                      ' ',
-                      h('span', { style: S.faint }, (row.mine ? '本机' : row.machineId) + ' · ' + fmtBytes(row.bytes))
-                    ),
-                    row.mine
-                      ? null
-                      : h(Btn, { onClick: function () { take(row) } }, '用这份覆盖本机')
-                  ),
-                  h(Fold, { title: '查看内容', chars: row.text.length }, row.text)
-                )
-              })
-        )
-      )
-    }
-
-    // ------------------------------------------------------------- 设置 tab
-
-    function SettingsTab(props) {
-      const status = props.status
-      const [form, setForm] = useState(null)
-      const [message, setMessage] = useState('')
-      const [hubs, setHubs] = useState([])
-      const [busy, setBusy] = useState(false)
-      const [audit, setAudit] = useState([])
-      const [rootInput, setRootInput] = useState('')
-
-      useEffect(
-        function () {
-          if (!status || form) return
-          setForm({
-            role: status.config.role,
-            port: String(status.config.port),
-            hubHost: status.config.hubHost,
-            hubPort: String(status.config.hubPort),
-            token: status.token,
-            autoSync: status.config.autoSync,
-            pushIntervalMs: String(status.config.pushIntervalMs),
-            pullIntervalMs: String(status.config.pullIntervalMs),
-            discovery: status.config.discovery,
-            machineName: status.identity.machineName
-          })
-        },
-        [status]
-      )
-
-      useEffect(
-        function () {
-          api('/audit?limit=30')
-            .then(function (body) {
-              setAudit(body.entries || [])
-            })
-            .catch(function () {
-              setAudit([])
-            })
-        },
-        [props.tick]
-      )
-
-      if (!status || !form) return h('div', { style: { padding: 16, color: C.dim } }, '读取中…')
-
-      const set = function (key, value) {
-        setForm(Object.assign({}, form, { [key]: value }))
-      }
-
-      const save = function () {
-        setBusy(true)
-        setMessage('')
-        api('/setup', {
-          method: 'POST',
-          body: {
-            role: form.role,
-            port: Number(form.port),
-            hubHost: form.hubHost.trim(),
-            hubPort: Number(form.hubPort),
-            token: form.token.trim(),
-            autoSync: form.autoSync,
-            pushIntervalMs: Number(form.pushIntervalMs),
-            pullIntervalMs: Number(form.pullIntervalMs),
-            discovery: form.discovery,
-            machineName: form.machineName
-          }
-        })
-          .then(function () {
-            setMessage('设置已保存')
-            props.refresh()
-          })
-          .catch(function (err) {
-            setMessage('保存失败：' + String(err.message || err))
-          })
-          .finally(function () {
-            setBusy(false)
-          })
-      }
-
-      const discover = function () {
-        setBusy(true)
-        api('/discover', { method: 'POST', body: {} })
-          .then(function (body) {
-            setHubs(body.hubs || [])
-            setMessage((body.hubs || []).length === 0 ? '没有发现任何设备（可手动填写地址，或用「测试连接」直连）' : '发现 ' + body.hubs.length + ' 台设备')
-          })
-          .catch(function (err) {
-            setMessage('发现失败：' + String(err.message || err))
-          })
-          .finally(function () {
-            setBusy(false)
-          })
-      }
-
-      const testHub = function () {
-        setBusy(true)
-        api('/test-hub', {
-          method: 'POST',
-          body: { hubHost: form.hubHost.trim(), hubPort: Number(form.hubPort), token: form.token.trim() }
-        })
-          .then(function (body) {
-            if (body.ok) setMessage('连接成功：' + (body.hello.identity.machineName || '') + ' · rev ' + body.hello.rev)
-            else setMessage('连接失败：' + (body.error && body.error.message))
-          })
-          .catch(function (err) {
-            setMessage('连接失败：' + String(err.message || err))
-          })
-          .finally(function () {
-            setBusy(false)
-          })
-      }
-
-      const addRoot = function () {
-        if (!rootInput.trim()) return
-        api('/roots', { method: 'POST', body: { add: [rootInput.trim()] } })
-          .then(function () {
-            setRootInput('')
-            setMessage('已加入共享根目录')
-            props.refresh()
-          })
-          .catch(function (err) {
-            setMessage('失败：' + String(err.message || err))
-          })
-      }
-
-      return h(
-        'div',
-        { style: Object.assign({}, S.scroll, { flex: 1, padding: 14, maxWidth: 760 }) },
-        message ? h('div', { style: Object.assign({}, S.ok, { marginBottom: 10 }) }, message) : null,
-        h(
-          'div',
-          { style: Object.assign({}, S.card, { marginBottom: 14 }) },
-          h('div', { style: { fontWeight: 600, marginBottom: 10 } }, '配对'),
-          h(
-            Field,
-            { label: '这台电脑的角色' },
-            h(
-              'select',
-              {
-                style: S.input,
-                value: form.role,
-                onChange: function (event) {
-                  set('role', event.target.value)
-                }
-              },
-              h('option', { value: 'hub' }, '主机（hub，常开的那台，提供共享区）'),
-              h('option', { value: 'peer' }, '成员（peer，连接主机）')
-            )
-          ),
-          form.role === 'hub'
-            ? h(
-                'div',
-                { style: { marginBottom: 10 } },
-                h(Field, { label: '监听端口' }, h('input', { style: S.input, value: form.port, onChange: function (e) { set('port', e.target.value) } })),
-                h(
-                  'div',
-                  { style: Object.assign({}, S.card, { background: 'transparent', marginBottom: 10 }) },
-                  h('div', { style: S.label }, '把这串信息填到另一台电脑'),
-                  h('div', { style: Object.assign({}, S.mono, { wordBreak: 'break-all', marginBottom: 6 }) }, (status.lan.addresses[0] && status.lan.addresses[0].address) || '（没有局域网地址）'),
-                  h('div', { style: Object.assign({}, S.mono, { wordBreak: 'break-all' }) }, form.token),
-                  h(
-                    'div',
-                    { style: Object.assign({}, S.faint, { marginTop: 6 }) },
-                    '地址取这一台在局域网里的 IPv4；端口 ' + form.port + '。对端需要放行该端口。'
-                  )
-                )
-              )
-            : h(
-                React.Fragment,
-                null,
-                h(
-                  Field,
-                  { label: '主机地址' },
-                  h('input', {
-                    style: S.input,
-                    value: form.hubHost,
-                    placeholder: '例如 192.168.1.23',
-                    onChange: function (event) {
-                      set('hubHost', event.target.value)
-                    }
-                  })
-                ),
-                h(Field, { label: '主机端口' }, h('input', { style: S.input, value: form.hubPort, onChange: function (e) { set('hubPort', e.target.value) } })),
-                h(
-                  'div',
-                  { style: Object.assign({}, S.row, { marginBottom: 10 }) },
-                  h(Btn, { onClick: discover, disabled: busy }, '局域网自动发现'),
-                  h(Btn, { onClick: testHub, disabled: busy }, '测试连接')
-                ),
-                hubs.length > 0
-                  ? h(
-                      'div',
-                      { style: { marginBottom: 10 } },
-                      hubs.map(function (hub) {
-                        const isHub = hub.role !== 'peer'
-                        return h(
-                          'button',
-                          {
-                            key: hub.identity.machineId,
-                            type: 'button',
-                            disabled: !isHub,
-                            onClick: function () {
-                              if (!isHub) return
-                              setForm(Object.assign({}, form, { hubHost: hub.host, hubPort: String(hub.port) }))
-                            },
-                            style: Object.assign({}, S.btn, {
-                              display: 'block',
-                              width: '100%',
-                              textAlign: 'left',
-                              marginBottom: 4,
-                              opacity: isHub ? 1 : 0.6
-                            })
-                          },
-                          hub.identity.machineName + ' · ' + hub.host + ':' + hub.port + ' · ' + (isHub ? '主机' : '成员')
-                        )
-                      })
-                    )
-                  : null
-              ),
-          h(Field, { label: '共享令牌（两台必须一致）' }, h('input', { style: S.input, value: form.token, onChange: function (e) { set('token', e.target.value) } })),
-          h(
-            'div',
-            { style: S.row },
-            h(Btn, { primary: true, onClick: save, disabled: busy }, '保存'),
-            h(Btn, { onClick: props.refresh }, '刷新状态')
-          )
-        ),
-        h(
-          'div',
-          { style: Object.assign({}, S.card, { marginBottom: 14 }) },
-          h('div', { style: { fontWeight: 600, marginBottom: 10 } }, '同步计划'),
-          h(
-            Field,
-            { label: '自动同步' },
-            h(
-              'select',
-              {
-                style: S.input,
-                value: form.autoSync ? '1' : '0',
-                onChange: function (event) {
-                  set('autoSync', event.target.value === '1')
-                }
-              },
-              h('option', { value: '1' }, '开启（接近实时）'),
-              h('option', { value: '0' }, '关闭（只手动同步）')
-            )
-          ),
-          h(
-            'div',
-            { style: { display: 'flex', gap: 10 } },
-            h(Field, { label: '推送间隔 (ms)' }, h('input', { style: S.input, value: form.pushIntervalMs, onChange: function (e) { set('pushIntervalMs', e.target.value) } })),
-            h(Field, { label: '拉取间隔 (ms)' }, h('input', { style: S.input, value: form.pullIntervalMs, onChange: function (e) { set('pullIntervalMs', e.target.value) } }))
-          ),
-          h(
-            'div',
-            { style: Object.assign({}, S.faint, { lineHeight: 1.7 }) },
-            '本机新的对话事件会合并到一次导出；成员按拉取间隔向主机取回新记录。想定时跑真正的"代理任务"，请用 DSH 自带的自动化（automation_create）。'
-          )
-        ),
-        h(
-          'div',
-          { style: Object.assign({}, S.card, { marginBottom: 14 }) },
-          h('div', { style: { fontWeight: 600, marginBottom: 8 } }, '共享的根目录'),
-          (status.roots || []).map(function (root) {
-            return h(
-              'div',
-              { key: root.id, style: Object.assign({}, S.row, { justifyContent: 'space-between', borderTop: '1px solid ' + C.border, padding: '6px 0' }) },
-              h(
-                'div',
-                { style: { minWidth: 0 } },
-                h('div', null, root.label),
-                h('div', { style: Object.assign({}, S.faint, { fontFamily: C.mono, wordBreak: 'break-all' }) }, root.path)
-              ),
-              h(
-                Btn,
-                {
-                  danger: true,
-                  onClick: function () {
-                    api('/roots', { method: 'POST', body: { remove: [root.path] } })
-                      .then(function () {
-                        setMessage('已移出共享')
-                        props.refresh()
-                      })
-                      .catch(function (err) {
-                        setMessage('失败：' + String(err.message || err))
-                      })
-                  }
-                },
-                '移除'
-              )
-            )
-          }),
-          h(
-            'div',
-            { style: Object.assign({}, S.row, { marginTop: 10 }) },
-            h('input', {
-              style: S.input,
-              placeholder: '额外共享目录的绝对路径',
-              value: rootInput,
-              onChange: function (event) {
-                setRootInput(event.target.value)
-              }
-            }),
-            h(Btn, { onClick: addRoot }, '添加')
-          )
-        ),
-        h(
-          'div',
-          { style: S.card },
-          h('div', { style: { fontWeight: 600, marginBottom: 8 } }, '最近活动'),
-          audit.length === 0
-            ? h('div', { style: S.muted }, '暂无记录')
-            : audit.map(function (row, index) {
-                return h(
-                  'div',
-                  { key: index, style: Object.assign({}, S.faint, { fontFamily: C.mono, padding: '2px 0', wordBreak: 'break-all' }) },
-                  new Date(row.at).toLocaleTimeString() + '  ' + (row.kind || '') + '  ' + JSON.stringify(Object.assign({}, row, { at: undefined, kind: undefined })).slice(0, 140)
-                )
-              })
-        )
-      )
-    }
-
-    // ------------------------------------------------------------- 主 面板
 
     function ErrorBoundary(props) {
       return h(Boundary, null, props.children)
@@ -2034,7 +207,7 @@ window.__ModuleLoader__.load({
             'div',
             { style: { padding: 20 } },
             h('div', { style: { color: C.err, marginBottom: 6, fontWeight: 600 } }, '局域网面板渲染失败'),
-            h('pre', { style: { color: C.dim, whiteSpace: 'pre-wrap', fontSize: 12 } }, String(this.state.error && this.state.error.stack ? this.state.error.stack : this.state.error)),
+            h('pre', { style: S.pre }, String(this.state.error && this.state.error.stack ? this.state.error.stack : this.state.error)),
             h(Btn, { onClick: () => this.setState({ error: null }) }, '重试')
           )
         }
@@ -2042,51 +215,177 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const TABS = [
-      { key: 'conversations', label: '对话' },
-      { key: 'plugins', label: '插件' },
-      { key: 'files', label: '文件' },
-      { key: 'memory', label: '记忆' },
-      { key: 'settings', label: '设置' }
-    ]
+    // ---------------------------------------------------------------- helpers
 
-    function Panel() {
-      const [tab, setTab] = useState('conversations')
+    async function api(pathname, options) {
+      const opts = options || {}
+      const response = await fetch(PREFIX + pathname, {
+        method: opts.method || 'GET',
+        headers: Object.assign({ 'content-type': 'application/json' }, opts.headers || {}),
+        body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
+      })
+      const text = await response.text()
+      let body = null
+      try {
+        body = text ? JSON.parse(text) : null
+      } catch (err) {
+        body = { raw: text }
+      }
+      if (!response.ok) {
+        const message = (body && body.error && body.error.message) || body.raw || response.statusText
+        const error = new Error(message || '请求失败')
+        error.code = body && body.error && body.error.code
+        error.status = response.status
+        throw error
+      }
+      return body
+    }
+
+    function fmtBytes(value) {
+      const bytes = Number(value) || 0
+      if (bytes < 1024) return bytes + ' B'
+      const units = ['KB', 'MB', 'GB', 'TB']
+      let size = bytes
+      let unit = -1
+      do {
+        size /= 1024
+        unit += 1
+      } while (size >= 1024 && unit < units.length - 1)
+      return (size >= 10 ? size.toFixed(0) : size.toFixed(1)) + ' ' + units[unit]
+    }
+
+    function fmtTime(value) {
+      if (!value) return '从未'
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return String(value)
+      const diff = Date.now() - date.getTime()
+      if (diff < 60000) return '刚刚'
+      if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前'
+      if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前'
+      return date.toLocaleString()
+    }
+
+    function trustTone(trust) {
+      return trust === 'trusted' ? 'ok' : trust === 'blocked' ? 'err' : 'warn'
+    }
+
+    function trustLabel(trust) {
+      return trust === 'trusted' ? '已信任' : trust === 'blocked' ? '已阻止' : '待确认'
+    }
+
+    async function hostOpenSession(sessionId) {
+      const workspace =
+        HOST && (HOST.uiWorkspace || (typeof HOST.get === 'function' ? HOST.get('uiWorkspace') : null))
+      if (!workspace || typeof workspace.openSession !== 'function') {
+        return { ok: false, error: 'this DSH build does not expose uiWorkspace.openSession' }
+      }
+      try {
+        workspace.openSession(sessionId)
+        return { ok: true }
+      } catch (err) {
+        // A session written by the host may not be in the client's catalog yet.
+        // Refresh the session list once and retry before falling back to the
+        // sidebar hint.
+        try {
+          const sessions = HOST.sessions || (typeof HOST.get === 'function' ? HOST.get('sessions') : null)
+          if (sessions && sessions.manager && typeof sessions.manager.refreshList === 'function') {
+            await sessions.manager.refreshList()
+            workspace.openSession(sessionId)
+            return { ok: true }
+          }
+        } catch (retryError) {
+          return { ok: false, error: String((retryError && retryError.message) || retryError) }
+        }
+        return { ok: false, error: String((err && err.message) || err) }
+      }
+    }
+
+    function copyText(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text)
+          return true
+        }
+      } catch (err) {
+        /* fall through */
+      }
+      return false
+    }
+
+    // A deliberately small markdown renderer for previews only. Native DSH
+    // surfaces render the real thing; this is for a remote transcript preview.
+    function Preview(props) {
+      const text = String(props.text || '').slice(0, 200000)
+      if (!text) return null
+      const lines = text.split('\n')
+      const nodes = []
+      let buffer = []
+      let code = []
+      let inCode = false
+      let key = 0
+      function flush() {
+        if (buffer.length) {
+          nodes.push(h('div', { key: 'p' + key++, style: { margin: '0 0 6px', lineHeight: 1.6 } }, buffer.join('\n')))
+          buffer = []
+        }
+      }
+      for (const line of lines) {
+        if (/^```/.test(line.trim())) {
+          if (inCode) {
+            nodes.push(h('pre', { key: 'c' + key++, style: S.pre }, code.join('\n')))
+            code = []
+            inCode = false
+          } else {
+            flush()
+            inCode = true
+          }
+          continue
+        }
+        if (inCode) {
+          code.push(line)
+          continue
+        }
+        if (/^\s*$/.test(line)) {
+          flush()
+          continue
+        }
+        buffer.push(line)
+      }
+      if (inCode && code.length) nodes.push(h('pre', { key: 'c' + key++, style: S.pre }, code.join('\n')))
+      flush()
+      return h('div', { style: { fontSize: 12.5, color: C.text } }, nodes)
+    }
+
+    // ------------------------------------------------------------ data hooks
+
+    function useStatus() {
       const [status, setStatus] = useState(null)
       const [error, setError] = useState('')
-      const [tick, setTick] = useState(0)
-      const [syncing, setSyncing] = useState(false)
-      const [note, setNote] = useState('')
       const mounted = useRef(true)
-
       const refresh = useCallback(function () {
         api('/status')
           .then(function (body) {
-            if (!mounted.current) return
-            setStatus(body)
-            setError('')
+            if (mounted.current) {
+              setStatus(body)
+              setError('')
+            }
           })
           .catch(function (err) {
-            if (!mounted.current) return
-            setError(String(err.message || err))
+            if (mounted.current) setError(String(err.message || err))
           })
       }, [])
-
       useEffect(function () {
         mounted.current = true
         refresh()
-        const timer = setInterval(refresh, 8000)
+        const timer = setInterval(refresh, 7000)
         let stream = null
         try {
           stream = new EventSource(PREFIX + '/stream')
           stream.onmessage = function () {
-            setTick(function (value) {
-              return value + 1
-            })
             refresh()
           }
           stream.onerror = function () {
-            /* the 8s poll keeps the UI alive */
+            /* polling keeps the UI alive */
           }
         } catch (err) {
           stream = null
@@ -2097,40 +396,975 @@ window.__ModuleLoader__.load({
           if (stream) stream.close()
         }
       }, [])
+      return { status, error, refresh }
+    }
 
-      const syncNow = function () {
-        setSyncing(true)
-        setNote('')
-        api('/sync', { method: 'POST', body: {} })
+    async function waitTask(taskId) {
+      for (let i = 0; i < 240; i += 1) {
+        const row = await api('/task?id=' + encodeURIComponent(taskId))
+        if (row.status === 'complete') return row.result
+        if (row.status === 'failed') throw new Error(row.error || '任务失败')
+        await new Promise(function (resolve) {
+          setTimeout(resolve, 800)
+        })
+      }
+      throw new Error('任务超时')
+    }
+
+    // ------------------------------------------------------------------ bits
+
+    function DeviceCard(props) {
+      const peer = props.peer
+      return h(
+        'div',
+        { style: Object.assign({}, S.card, { display: 'flex', flexDirection: 'column', gap: 8 }) },
+        h(
+          'div',
+          { style: S.row },
+          h(Dot, { tone: peer.trust === 'trusted' ? 'ok' : peer.trust === 'blocked' ? 'err' : 'warn' }),
+          h('div', { style: { minWidth: 0, flex: 1 } },
+            h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, peer.name || peer.nodeId),
+            h('div', { style: S.sub },
+              h('span', { style: S.mono }, peer.address ? peer.address + ':' + peer.port : '未发现地址'),
+              h('span', null, fmtTime(peer.lastSeenAt))
+            )
+          ),
+          h(Badge, { tone: trustTone(peer.trust) }, trustLabel(peer.trust))
+        ),
+        peer.sync && peer.sync.lastSummary ? h('div', { style: { color: C.faint, fontSize: 11.5 } }, peer.sync.lastSummary) : null,
+        peer.lastError ? h('div', { style: S.err }, peer.lastError) : null,
+        h(
+          'div',
+          { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+          peer.trust !== 'trusted'
+            ? h(Btn, { small: true, primary: true, onClick: function () { props.onTrust(peer, 'trusted') } }, '信任')
+            : null,
+          peer.trust !== 'blocked'
+            ? h(Btn, { small: true, danger: true, onClick: function () { props.onTrust(peer, 'blocked') } }, '阻止')
+            : h(Btn, { small: true, onClick: function () { props.onTrust(peer, 'pending') } }, '解除阻止'),
+          peer.trust === 'trusted'
+            ? h(Btn, { small: true, onClick: function () { props.onBrowse(peer) } }, '浏览文件')
+            : null,
+          peer.trust === 'trusted'
+            ? h(Btn, { small: true, onClick: function () { props.onChat(peer) } }, '对话')
+            : null,
+          h(Btn, { small: true, ghost: true, onClick: function () { props.onPing(peer) } }, 'Ping')
+        )
+      )
+    }
+
+    function TransferRow(props) {
+      const row = props.row
+      return h(
+        'div',
+        { style: Object.assign({}, S.card, { padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }) },
+        h('div', { style: S.row },
+          h('div', { style: { flex: 1, minWidth: 0 } },
+            h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, row.name),
+            h('div', { style: S.sub },
+              fmtBytes(row.size),
+              row.kind === 'incoming' ? ' · 来自 ' + (row.from || '?') : ' · 发往 ' + (row.peer || '?'),
+              ' · ' + row.status
+            )
+          ),
+          row.kind === 'incoming' && row.status === 'pending'
+            ? h(Btn, { small: true, primary: true, onClick: function () { props.onApprove(row) } }, '接收')
+            : null,
+          row.kind === 'incoming' && row.status === 'pending'
+            ? h(Btn, { small: true, danger: true, onClick: function () { props.onReject(row) } }, '拒绝')
+            : null
+        ),
+        row.status === 'receiving' && row.size
+          ? h('div', { style: { height: 4, background: C.layer2, borderRadius: 4, overflow: 'hidden' } },
+            h('div', { style: { height: '100%', width: Math.min(100, Math.round((row.bytes / row.size) * 100)) + '%', background: C.brand } }))
+          : null,
+        row.path ? h('div', { style: { color: C.faint, fontSize: 11.5, wordBreak: 'break-all' } }, row.path) : null,
+        row.error ? h('div', { style: S.err }, row.error) : null
+      )
+    }
+
+    // ------------------------------------------------------------------ home
+
+    function HomeTab(props) {
+      const status = props.status
+      const [invite, setInvite] = useState('')
+      const [note, setNote] = useState('')
+      const peers = (status && status.peers) || []
+      const trusted = peers.filter(function (peer) { return peer.trust === 'trusted' })
+      const incoming = (status && status.transfers && status.transfers.incoming) || []
+      const outgoing = (status && status.transfers && status.transfers.outgoing) || []
+      const pending = incoming.filter(function (row) { return row.status === 'pending' })
+      const active = incoming.filter(function (row) { return row.status !== 'pending' }).concat(outgoing)
+      const current = status ? status.identity : null
+      const transportOk = status && status.transport && status.transport.listening
+      const discoveryOk = status && status.discovery && status.discovery.listening
+
+      const trust = function (peer, level) {
+        api('/peers/trust', { method: 'POST', body: { nodeId: peer.nodeId, trust: level } })
+          .then(function () { props.refresh() })
+          .catch(function (err) { setNote(String(err.message || err)) })
+      }
+      const ping = function (peer) {
+        api('/ping', { method: 'POST', body: { node: peer.nodeId } })
+          .then(function (body) { setNote('Ping ' + peer.name + ' · ' + body.latencyMs + 'ms') })
+          .catch(function (err) { setNote('Ping 失败：' + String(err.message || err)) })
+      }
+      const makeInvite = function () {
+        api('/invite')
           .then(function (body) {
-            const result = (body && body.result) || {}
-            if (result && result.ok === false) setNote('同步未完成：' + (result.message || result.code || ''))
-            else setNote('已同步')
-            setTick(function (value) {
-              return value + 1
-            })
-            refresh()
+            setInvite(body.code)
+            if (copyText(body.code)) setNote('邀请码已复制')
+            else setNote('邀请码已生成，请手动复制')
           })
-          .catch(function (err) {
-            setNote('同步失败：' + String(err.message || err))
-          })
-          .finally(function () {
-            setSyncing(false)
-          })
+          .catch(function (err) { setNote(String(err.message || err)) })
       }
 
-      const role = status && status.identity ? status.identity.role : ''
-      const hubOk = status && status.hub ? status.hub.reachable === true : false
-      const linkLabel =
-        role === 'hub'
-          ? status && status.lan.listening
-            ? '主机 · 监听中'
-            : '主机 · 未监听'
-          : hubOk
-            ? '已连接主机'
-            : status && status.config.hubHost
-              ? '主机不可达'
-              : '未配对'
+      return h(
+        'div',
+        null,
+        h(
+          'div',
+          { style: Object.assign({}, S.card, { display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', background: C.layer2, marginBottom: 16 }) },
+          h('div', { style: { width: 42, height: 42, borderRadius: 12, background: C.brand, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, h(Glyph, { name: 'device', size: 22, color: '#fff' })),
+          h('div', { style: { flex: 1, minWidth: 180 } },
+            h('div', { style: { fontWeight: 650, fontSize: 15 } }, current ? current.nodeName : '本机'),
+            h('div', { style: S.sub },
+              h('span', null, '空间 ' + (status && status.config ? status.config.spaceId : '')),
+              h(Dot, { tone: transportOk ? 'ok' : 'err' }),
+              h('span', null, transportOk ? '监听 ' + (status.transport.port) : '未监听'),
+              h(Dot, { tone: discoveryOk ? 'ok' : 'warn' }),
+              h('span', null, discoveryOk ? '发现已开启' : '发现已关闭')
+            )
+          ),
+          h('div', { style: { display: 'flex', gap: 6 } },
+            h(Btn, { onClick: function () { props.setTab('files') } }, '发送文件'),
+            h(Btn, { onClick: function () { props.setTab('settings') } }, '设置'),
+            h(Btn, { primary: true, onClick: makeInvite }, '邀请设备')
+          )
+        ),
+        note ? h('div', { style: { marginBottom: 12, color: C.dim, fontSize: 12 } }, note) : null,
+        invite
+          ? h('div', { style: Object.assign({}, S.card, { marginBottom: 16 }) },
+            h('div', { style: Object.assign({}, S.label, { marginBottom: 6 }) }, '把这段邀请码发给另一台电脑'),
+            h('div', { style: Object.assign({}, S.pre, { maxHeight: 90 }) }, invite),
+            h('div', { style: { marginTop: 8, display: 'flex', gap: 6 } },
+              h(Btn, { small: true, onClick: function () { copyText(invite) } }, '复制'),
+              h(Btn, { small: true, ghost: true, onClick: function () { setInvite('') } }, '收起')
+            )
+          )
+          : null,
+        pending.length
+          ? h(Section, { title: '待接收 · ' + pending.length },
+            h('div', { style: S.col }, pending.map(function (row) {
+              return h(TransferRow, {
+                key: row.id,
+                row,
+                onApprove: function (item) { props.approve(item) },
+                onReject: function (item) { props.reject(item) }
+              })
+            }))
+          )
+          : null,
+        active.length
+          ? h(Section, { title: '传输中 / 最近' },
+            h('div', { style: S.col }, active.map(function (row) {
+              return h(TransferRow, {
+                key: row.kind + row.id,
+                row,
+                onApprove: function (item) { props.approve(item) },
+                onReject: function (item) { props.reject(item) }
+              })
+            }))
+          )
+          : null,
+        h(Section, { title: '设备 · ' + trusted.length + ' 台已信任' },
+          peers.length
+            ? h('div', { style: S.grid }, peers.map(function (peer) {
+              return h(DeviceCard, {
+                key: peer.nodeId,
+                peer,
+                onTrust: trust,
+                onPing: ping,
+                onBrowse: function (item) {
+                  props.setTarget(item.nodeId)
+                  props.setTab('files')
+                },
+                onChat: function (item) {
+                  props.setTarget(item.nodeId)
+                  props.setTab('conversations')
+                }
+              })
+            }))
+            : h(Empty, null, '还没有发现设备。打开另一台电脑上的局域网面板，或使用邀请码加入。')
+        ),
+        h(Section, { title: '同步' },
+          h('div', { style: Object.assign({}, S.card, { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }) },
+            h('div', { style: { flex: 1, minWidth: 180 } },
+              h('div', { style: { fontWeight: 600 } }, status && status.sync && status.sync.lastSummary ? status.sync.lastSummary : '尚未同步'),
+              h('div', { style: S.sub }, '会话、记忆与插件清单会在已信任设备之间自动收敛'),
+              status && status.sync && status.sync.lastError ? h('div', { style: S.err }, status.sync.lastError) : null
+            ),
+            h(Btn, { onClick: function () { api('/sync', { method: 'POST', body: {} }).then(props.refresh).catch(function (err) { setNote(String(err.message || err)) }) } }, '立即同步')
+          )
+        )
+      )
+    }
+
+    // ----------------------------------------------------------------- files
+
+    function FilesTab(props) {
+      const status = props.status
+      const peers = (status && status.peers || []).filter(function (peer) { return peer.trust === 'trusted' })
+      const [node, setNode] = useState(props.target || '')
+      const [roots, setRoots] = useState([])
+      const [root, setRoot] = useState('')
+      const [cwd, setCwd] = useState('')
+      const [entries, setEntries] = useState([])
+      const [preview, setPreview] = useState(null)
+      const [error, setError] = useState('')
+      const [note, setNote] = useState('')
+      const [loading, setLoading] = useState(false)
+      const [sendOpen, setSendOpen] = useState(false)
+      const [sendPeer, setSendPeer] = useState(peers.length ? peers[0].nodeId : '')
+      const [sendMode, setSendMode] = useState('inbox')
+      const [sendRoots, setSendRoots] = useState([])
+      const [sendRoot, setSendRoot] = useState('')
+
+      useEffect(function () {
+        if (!sendPeer) return
+        api('/remote/workspaces?node=' + encodeURIComponent(sendPeer))
+          .then(function (body) {
+            const rows = body.roots || []
+            setSendRoots(rows)
+            setSendRoot(rows.length ? rows[0].id : '')
+          })
+          .catch(function () { setSendRoots([]) })
+      }, [sendPeer])
+
+      useEffect(function () {
+        if (!sendPeer && peers.length) setSendPeer(peers[0].nodeId)
+      }, [peers.length])
+
+      useEffect(function () {
+        if (props.target && props.target !== node) setNode(props.target)
+      }, [props.target])
+
+      useEffect(function () {
+        let cancelled = false
+        setError('')
+        const path = node ? '/remote/workspaces?node=' + encodeURIComponent(node) : '/workspaces'
+        api(path)
+          .then(function (body) {
+            if (cancelled) return
+            const rows = body.roots || []
+            setRoots(rows)
+            const next = rows.length ? rows[0].id : ''
+            setRoot(next)
+            setCwd('')
+            setEntries([])
+            setPreview(null)
+          })
+          .catch(function (err) {
+            if (!cancelled) setError(String(err.message || err))
+          })
+        return function () { cancelled = true }
+      }, [node])
+
+      const loadList = useCallback(function (nextRoot, nextPath) {
+        if (!nextRoot) return
+        setLoading(true)
+        setError('')
+        const prefix = node ? '/remote/files/list?node=' + encodeURIComponent(node) : '/files/list'
+        api(prefix + '?root=' + encodeURIComponent(nextRoot) + '&path=' + encodeURIComponent(nextPath || ''))
+          .then(function (body) {
+            setEntries(body.entries || [])
+            setCwd(body.path || '')
+            setPreview(null)
+          })
+          .catch(function (err) { setError(String(err.message || err)) })
+          .finally(function () { setLoading(false) })
+      }, [node])
+
+      useEffect(function () {
+        if (root) loadList(root, '')
+      }, [root, loadList])
+
+      const openEntry = function (entry) {
+        if (entry.dir) {
+          loadList(root, entry.path)
+          return
+        }
+        setLoading(true)
+        const prefix = node ? '/remote/files/read?node=' + encodeURIComponent(node) : '/files/read'
+        api(prefix + '?root=' + encodeURIComponent(root) + '&path=' + encodeURIComponent(entry.path))
+          .then(function (body) {
+            if (body.binary) {
+              setPreview({ name: entry.name, path: entry.path, binary: true, size: entry.size })
+            } else {
+              setPreview({ name: entry.name, path: entry.path, binary: false, size: entry.size, content: body.content || '' })
+            }
+          })
+          .catch(function (err) { setError(String(err.message || err)) })
+          .finally(function () { setLoading(false) })
+      }
+
+      const up = function () {
+        const parts = cwd.split('/').filter(Boolean)
+        parts.pop()
+        loadList(root, parts.join('/'))
+      }
+
+      const download = function () {
+        if (!preview) return
+        setNote('正在下载…')
+        api('/transfers/download', { method: 'POST', body: { node, root, path: preview.path } })
+          .then(function (body) { return waitTask(body.taskId) })
+          .then(function (result) { setNote('已保存到 ' + result.path) })
+          .catch(function (err) { setNote('下载失败：' + String(err.message || err)) })
+      }
+
+      const send = function () {
+        if (!preview || !sendPeer) return
+        setNote('正在发送…')
+        api('/transfers/send', {
+          method: 'POST',
+          body: {
+            node: sendPeer,
+            root,
+            path: preview.path,
+            mode: sendMode,
+            destRoot: sendMode === 'workspace' ? sendRoot : '',
+            destPath: ''
+          }
+        })
+          .then(function (body) { return waitTask(body.taskId) })
+          .then(function () { setNote('已发送'); setSendOpen(false) })
+          .catch(function (err) { setNote('发送失败：' + String(err.message || err)) })
+      }
+
+      const sourceLabel = node
+        ? (peers.find(function (peer) { return peer.nodeId === node }) || {}).name || node
+        : '本机'
+      const rootRow = roots.find(function (row) { return row.id === root })
+      const trail = cwd ? cwd.split('/').filter(Boolean) : []
+
+      return h(
+        'div',
+        null,
+        h(
+          'div',
+          { style: Object.assign({}, S.card, { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }) },
+          h(Field, { label: '来源' },
+            h('select', {
+              value: node,
+              onChange: function (event) { setNode(event.target.value) },
+              style: S.select
+            },
+              h('option', { value: '' }, '本机'),
+              peers.map(function (peer) { return h('option', { key: peer.nodeId, value: peer.nodeId }, peer.name || peer.nodeId) })
+            )
+          ),
+          h(Field, { label: '工作区' },
+            h('select', {
+              value: root,
+              onChange: function (event) { setRoot(event.target.value) },
+              style: S.select
+            },
+              roots.length ? roots.map(function (row) { return h('option', { key: row.id, value: row.id }, row.label + (row.kind === 'extra' ? ' · 手动' : '')) }) : h('option', { value: '' }, '没有共享工作区')
+            )
+          ),
+          h('div', { style: { flex: 1 } }),
+          h(Btn, { onClick: function () { loadList(root, cwd) }, disabled: loading }, loading ? '加载中…' : '刷新')
+        ),
+        error ? h('div', { style: Object.assign({}, S.err, { marginBottom: 10 }) }, error) : null,
+        note ? h('div', { style: { color: C.dim, marginBottom: 10, fontSize: 12 } }, note) : null,
+        h(
+          'div',
+          { style: { display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' } },
+          h(
+            'div',
+            { style: { flex: '1 1 320px', minWidth: 280 } },
+            h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' } },
+              h('span', { style: { color: C.faint, fontSize: 12 } }, sourceLabel + ' / ' + (rootRow ? rootRow.label : '')),
+              cwd ? h(Btn, { small: true, ghost: true, onClick: up }, '↑ 上一级') : null
+            ),
+            h('div', { style: Object.assign({}, S.card, { padding: 4 }) },
+              h(
+                'div',
+                { style: Object.assign({}, S.row, { padding: '6px 8px', color: C.faint, fontSize: 11.5, borderBottom: '1px solid ' + C.border }) },
+                h('span', { style: { flex: 1 } }, trail.length ? '/' + trail.join('/') : '根目录'),
+                h('span', null, entries.length + ' 项')
+              ),
+              entries.length
+                ? entries.map(function (entry) {
+                  return h(
+                    'button',
+                    {
+                      key: entry.path,
+                      type: 'button',
+                      onClick: function () { openEntry(entry) },
+                      style: {
+                        display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                        border: 'none', background: 'transparent', color: C.text, padding: '6px 8px',
+                        borderRadius: 5, cursor: 'pointer'
+                      }
+                    },
+                    h(Glyph, { name: entry.dir ? 'folder' : 'file', size: 15, color: entry.dir ? C.warn : C.dim }),
+                    h('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, entry.name),
+                    h('span', { style: { color: C.faint, fontSize: 11 } }, entry.dir ? '' : fmtBytes(entry.size)),
+                    entry.denied ? h(Badge, { tone: 'err' }, '禁止') : null
+                  )
+                })
+                : h(Empty, null, loading ? '读取中…' : '空目录')
+            )
+          ),
+          h(
+            'div',
+            { style: { flex: '1 1 360px', minWidth: 300 } },
+            preview
+              ? h(
+                'div',
+                { style: S.card },
+                h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' } },
+                  h('div', { style: { flex: 1, minWidth: 120 } },
+                    h('div', { style: { fontWeight: 600 } }, preview.name),
+                    h('div', { style: S.sub }, fmtBytes(preview.size) + (node ? ' · 来自 ' + sourceLabel : ''))
+                  ),
+                  node ? h(Btn, { small: true, onClick: download }, '下载到本机') : null,
+                  !node ? h(Btn, { small: true, primary: true, onClick: function () { setSendOpen(true) } }, '发送到设备') : null
+                ),
+                preview.binary
+                  ? h(Empty, null, '二进制文件不在此处预览，可以下载或发送。')
+                  : h(Preview, { text: preview.content }),
+                sendOpen
+                  ? h(
+                    'div',
+                    { style: { marginTop: 12, paddingTop: 12, borderTop: '1px solid ' + C.border, display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' } },
+                    h(Field, { label: '目标设备' },
+                      h('select', { value: sendPeer, onChange: function (event) { setSendPeer(event.target.value) }, style: S.select },
+                        peers.length ? peers.map(function (peer) { return h('option', { key: peer.nodeId, value: peer.nodeId }, peer.name || peer.nodeId) }) : h('option', { value: '' }, '没有已信任设备')
+                      )
+                    ),
+                    h(Field, { label: '落地位置' },
+                      h('select', { value: sendMode, onChange: function (event) { setSendMode(event.target.value) }, style: S.select },
+                        h('option', { value: 'inbox' }, '接收方收件箱'),
+                        h('option', { value: 'workspace' }, '接收方工作区')
+                      )
+                    ),
+                    sendMode === 'workspace'
+                      ? h(Field, { label: '目标工作区' },
+                        h('select', { value: sendRoot, onChange: function (event) { setSendRoot(event.target.value) }, style: S.select },
+                          sendRoots.length ? sendRoots.map(function (row) { return h('option', { key: row.id, value: row.id }, row.label) }) : h('option', { value: '' }, '对方没有共享工作区')
+                        )
+                      )
+                      : null,
+                    h(Btn, { primary: true, onClick: send, disabled: !sendPeer || (sendMode === 'workspace' && !sendRoot) }, '确认发送'),
+                    h(Btn, { ghost: true, onClick: function () { setSendOpen(false) } }, '取消')
+                  )
+                  : null
+              )
+              : h(Empty, null, '选择左侧文件查看预览')
+          )
+        )
+      )
+    }
+
+    // ---------------------------------------------------------- conversations
+
+    function Transcript(props) {
+      const rows = ((props.conversation && props.conversation.items) || []).slice(-200)
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+        rows.map(function (item, index) {
+          if (!item) return null
+          if (item.t === 'user') {
+            return h('div', { key: index, style: { alignSelf: 'flex-end', maxWidth: '86%', background: C.layer2, padding: '6px 9px', borderRadius: 8, whiteSpace: 'pre-wrap' } },
+              String(item.text || '').slice(0, 4000))
+          }
+          if (item.t === 'assistant') {
+            const text = (item.blocks || []).filter(function (block) { return block && block.k === 'text' }).map(function (block) { return block.text }).join('\n\n')
+            if (!text) return null
+            return h('div', { key: index, style: { alignSelf: 'flex-start', maxWidth: '90%', color: C.text } }, h(Preview, { text: text.slice(0, 12000) }))
+          }
+          if (item.t === 'tool-call') {
+            return h('div', { key: index, style: Object.assign({}, S.mono, { color: C.faint }) }, '⚙ ' + (item.name || 'tool'))
+          }
+          return null
+        })
+      )
+    }
+
+    function ConversationsTab(props) {
+      const status = props.status
+      const peers = (status && status.peers || []).filter(function (peer) { return peer.trust === 'trusted' })
+      const [node, setNode] = useState(props.target || '')
+      const [rows, setRows] = useState([])
+      const [selected, setSelected] = useState(null)
+      const [conversation, setConversation] = useState(null)
+      const [workspaces, setWorkspaces] = useState([])
+      const [workspace, setWorkspace] = useState('')
+      const [error, setError] = useState('')
+      const [note, setNote] = useState('')
+      const [busy, setBusy] = useState(false)
+
+      useEffect(function () {
+        if (props.target && props.target !== node) setNode(props.target)
+      }, [props.target])
+
+      useEffect(function () {
+        api('/workspaces')
+          .then(function (body) {
+            const local = body.local || []
+            setWorkspaces(local)
+            if (local.length) setWorkspace(local[0].key)
+          })
+          .catch(function () {})
+      }, [])
+
+      useEffect(function () {
+        setError('')
+        setRows([])
+        setSelected(null)
+        setConversation(null)
+        const path = node
+          ? '/conversations?node=' + encodeURIComponent(node) + '&limit=50'
+          : '/conversations?limit=50'
+        api(path)
+          .then(function (body) { setRows(body.conversations || []) })
+          .catch(function (err) { setError(String(err.message || err)) })
+      }, [node])
+
+      const select = function (row) {
+        setSelected(row)
+        setConversation(null)
+        const path = node
+          ? '/conversation?node=' + encodeURIComponent(node) + '&session=' + encodeURIComponent(row.sessionId)
+          : '/conversation?session=' + encodeURIComponent(row.sessionId)
+        api(path)
+          .then(function (body) { setConversation(body.conversation) })
+          .catch(function (err) { setError(String(err.message || err)) })
+      }
+
+      const openNative = function () {
+        if (!selected) return
+        setBusy(true)
+        setNote('正在 fork 到本机…')
+        api('/fork', {
+          method: 'POST',
+          body: { node: node || undefined, session: selected.sessionId, workspace: workspace || undefined }
+        })
+          .then(function (body) {
+            return hostOpenSession(body.sessionId).then(function (opened) {
+              if (opened.ok) setNote('已在新会话中打开')
+              else setNote('已写入本机，请从侧栏打开 ' + body.title + (opened.error ? '（' + opened.error + '）' : ''))
+            })
+          })
+          .catch(function (err) { setNote('打开失败：' + String(err.message || err)) })
+          .finally(function () { setBusy(false) })
+      }
+
+      return h(
+        'div',
+        null,
+        h(
+          'div',
+          { style: Object.assign({}, S.card, { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }) },
+          h(Field, { label: '来源' },
+            h('select', { value: node, onChange: function (event) { setNode(event.target.value) }, style: S.select },
+              h('option', { value: '' }, '本机'),
+              peers.map(function (peer) { return h('option', { key: peer.nodeId, value: peer.nodeId }, peer.name || peer.nodeId) })
+            )
+          ),
+          h(Field, { label: 'fork 到本机工作区' },
+            h('select', { value: workspace, onChange: function (event) { setWorkspace(event.target.value) }, style: S.select },
+              workspaces.length ? workspaces.map(function (row) { return h('option', { key: row.key, value: row.key }, row.cwd) }) : h('option', { value: '' }, '没有本机工作区')
+            )
+          ),
+          h('div', { style: { flex: 1 } }),
+          h(Btn, { primary: true, onClick: openNative, disabled: !selected || busy }, busy ? '打开中…' : '在 DSH 中打开')
+        ),
+        error ? h('div', { style: Object.assign({}, S.err, { marginBottom: 10 }) }, error) : null,
+        note ? h('div', { style: { color: C.dim, marginBottom: 10, fontSize: 12 } }, note) : null,
+        h(
+          'div',
+          { style: { display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' } },
+          h(
+            'div',
+            { style: { flex: '0 0 330px', minWidth: 280, maxWidth: '100%' } },
+            h('div', { style: Object.assign({}, S.card, { padding: 4 }) },
+              rows.length
+                ? rows.map(function (row) {
+                  return h(
+                    'button',
+                    {
+                      key: row.nodeId + '/' + row.sessionId,
+                      type: 'button',
+                      onClick: function () { select(row) },
+                      style: {
+                        display: 'block', width: '100%', textAlign: 'left', border: 'none',
+                        background: selected && selected.sessionId === row.sessionId ? C.layer2 : 'transparent',
+                        color: C.text, padding: '8px 9px', borderRadius: 6, cursor: 'pointer'
+                      }
+                    },
+                    h('div', { style: { fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, row.title || row.sessionId),
+                    h('div', { style: S.sub },
+                      h('span', null, fmtTime(row.updatedAt)),
+                      h('span', null, (row.cwd || '').split(/[\\/]/).pop() || '')
+                    )
+                  )
+                })
+                : h(Empty, null, '没有会话')
+            )
+          ),
+          h(
+            'div',
+            { style: { flex: '1 1 400px', minWidth: 300 } },
+            conversation
+              ? h('div', { style: S.card },
+                h('div', { style: { marginBottom: 10 } },
+                  h('div', { style: { fontWeight: 650, fontSize: 14 } }, conversation.title || selected.title || conversation.sessionId),
+                  h('div', { style: S.sub }, (conversation.cwd || '') + ' · ' + fmtTime(conversation.updatedAt))
+                ),
+                h('div', { style: { maxHeight: 480, overflow: 'auto', paddingRight: 4 } }, h(Transcript, { conversation }))
+              )
+              : h(Empty, null, '选择左侧会话预览。真正的对话会在 DSH 原生界面中打开。')
+          )
+        )
+      )
+    }
+
+    // -------------------------------------------------------------------- ai
+
+    function AiTab(props) {
+      const status = props.status
+      const peers = (status && status.peers || []).filter(function (peer) { return peer.trust === 'trusted' })
+      const [node, setNode] = useState('')
+      const [models, setModels] = useState([])
+      const [model, setModel] = useState('')
+      const [prompt, setPrompt] = useState('')
+      const [answer, setAnswer] = useState(null)
+      const [error, setError] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [teamPrompt, setTeamPrompt] = useState('')
+      const [teamNodes, setTeamNodes] = useState([])
+      const [teamResult, setTeamResult] = useState(null)
+
+      useEffect(function () {
+        setModels([])
+        setModel('')
+        setError('')
+        const path = node ? '/ai/models?node=' + encodeURIComponent(node) : '/ai/models'
+        api(path)
+          .then(function (body) {
+            const rows = body.models || []
+            setModels(rows)
+            if (rows.length) setModel(rows[0].provider + '/' + rows[0].id)
+          })
+          .catch(function (err) { setError(String(err.message || err)) })
+      }, [node])
+
+      const ask = function () {
+        if (!prompt.trim()) return
+        setBusy(true)
+        setError('')
+        setAnswer(null)
+        const selected = models.find(function (row) { return row.provider + '/' + row.id === model })
+        api('/ai/ask', {
+          method: 'POST',
+          body: {
+            node: node || undefined,
+            prompt,
+            provider: selected && selected.provider,
+            model: selected && selected.id
+          }
+        })
+          .then(function (body) { setAnswer(body) })
+          .catch(function (err) { setError(String(err.message || err)) })
+          .finally(function () { setBusy(false) })
+      }
+
+      const team = function () {
+        if (!teamPrompt.trim() || !teamNodes.length) return
+        setBusy(true)
+        setError('')
+        setTeamResult(null)
+        api('/ai/team', { method: 'POST', body: { prompt: teamPrompt, nodes: teamNodes } })
+          .then(function (body) { setTeamResult(body) })
+          .catch(function (err) { setError(String(err.message || err)) })
+          .finally(function () { setBusy(false) })
+      }
+
+      const toggleNode = function (id) {
+        setTeamNodes(function (current) {
+          return current.indexOf(id) >= 0 ? current.filter(function (row) { return row !== id }) : current.concat([id])
+        })
+      }
+
+      return h(
+        'div',
+        null,
+        h(
+          'div',
+          { style: Object.assign({}, S.card, { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }) },
+          h(Field, { label: '算力来源' },
+            h('select', { value: node, onChange: function (event) { setNode(event.target.value) }, style: S.select },
+              h('option', { value: '' }, '本机'),
+              peers.map(function (peer) { return h('option', { key: peer.nodeId, value: peer.nodeId }, peer.name || peer.nodeId) })
+            )
+          ),
+          h(Field, { label: '模型' },
+            h('select', { value: model, onChange: function (event) { setModel(event.target.value) }, style: Object.assign({}, S.select, { maxWidth: 280 }) },
+              models.length ? models.map(function (row) { return h('option', { key: row.provider + '/' + row.id, value: row.provider + '/' + row.id }, row.name + ' · ' + row.provider) }) : h('option', { value: '' }, '没有可用模型')
+            )
+          )
+        ),
+        error ? h('div', { style: Object.assign({}, S.err, { marginBottom: 10 }) }, error) : null,
+        h(Section, { title: node ? '借用远端模型' : '本机模型' },
+          h('div', { style: S.col },
+            h('textarea', {
+              value: prompt,
+              onChange: function (event) { setPrompt(event.target.value) },
+              placeholder: '问点什么…',
+              rows: 4,
+              style: Object.assign({}, S.input, { width: '100%', resize: 'vertical', fontFamily: C.mono })
+            }),
+            h('div', { style: { display: 'flex', gap: 6 } },
+              h(Btn, { primary: true, onClick: ask, disabled: busy || !prompt.trim() }, busy ? '思考中…' : '发送'),
+              h(Btn, { ghost: true, onClick: function () { setPrompt('') } }, '清空')
+            ),
+            answer
+              ? h('div', { style: S.card },
+                h('div', { style: S.sub }, answer.provider + ' / ' + answer.model + (answer.ms ? ' · ' + answer.ms + 'ms' : '')),
+                h(Preview, { text: answer.text })
+              )
+              : null
+          )
+        ),
+        h(Section, { title: '多机协作' },
+          h('div', { style: S.col },
+            h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+              peers.length
+                ? peers.map(function (peer) {
+                  const on = teamNodes.indexOf(peer.nodeId) >= 0
+                  return h(Btn, { key: peer.nodeId, small: true, primary: on, onClick: function () { toggleNode(peer.nodeId) } }, (on ? '✓ ' : '') + (peer.name || peer.nodeId))
+                })
+                : h('span', { style: S.note }, '没有已信任设备')
+            ),
+            h('textarea', {
+              value: teamPrompt,
+              onChange: function (event) { setTeamPrompt(event.target.value) },
+              placeholder: '同一个问题发给多台设备…',
+              rows: 3,
+              style: Object.assign({}, S.input, { width: '100%', resize: 'vertical', fontFamily: C.mono })
+            }),
+            h('div', null, h(Btn, { primary: true, onClick: team, disabled: busy || !teamPrompt.trim() || !teamNodes.length }, busy ? '汇总中…' : '并行提问')),
+            teamResult
+              ? h('div', { style: S.grid }, (teamResult.results || []).map(function (row) {
+                return h('div', { key: row.nodeId, style: S.card },
+                  h('div', { style: S.row }, h(Dot, { tone: row.ok ? 'ok' : 'err' }), h('div', { style: { fontWeight: 600 } }, row.name || row.nodeId)),
+                  row.ok ? h(Preview, { text: row.text }) : h('div', { style: S.err }, row.error)
+                )
+              }))
+              : null
+          )
+        )
+      )
+    }
+
+    // -------------------------------------------------------------- settings
+
+    function SettingsTab(props) {
+      const status = props.status
+      const config = (status && status.config) || {}
+      const [form, setForm] = useState({})
+      const [note, setNote] = useState('')
+      const [invite, setInvite] = useState('')
+      const [join, setJoin] = useState('')
+      const [bootstrap, setBootstrap] = useState('')
+      const [extraRoot, setExtraRoot] = useState('')
+      const [audit, setAudit] = useState([])
+      const loadedForm = useRef(false)
+
+      useEffect(function () {
+        if (!status || !status.config || loadedForm.current) return
+        loadedForm.current = true
+        setForm({
+          nodeName: config.nodeName || '',
+          port: config.port || 47820,
+          discoveryPort: config.discoveryPort || 47821,
+          discovery: config.discovery !== false,
+          syncIntervalMs: config.syncIntervalMs || 5000,
+          autoAcceptTransfers: config.autoAcceptTransfers === true,
+          allowRemoteRead: config.allowRemoteRead !== false,
+          allowRemoteAi: config.allowRemoteAi === true,
+          agentTools: config.agentTools !== false
+        })
+      }, [status])
+
+      const set = function (key, value) {
+        setForm(function (current) { return Object.assign({}, current, { [key]: value }) })
+      }
+
+      const save = function () {
+        setNote('保存中…')
+        api('/setup', { method: 'POST', body: form })
+          .then(function () { setNote('已保存'); props.refresh() })
+          .catch(function (err) { setNote('保存失败：' + String(err.message || err)) })
+      }
+
+      const makeInvite = function () {
+        api('/invite')
+          .then(function (body) {
+            setInvite(body.code)
+            if (!copyText(body.code)) setNote('邀请码已生成')
+          })
+          .catch(function (err) { setNote(String(err.message || err)) })
+      }
+
+      const doJoin = function () {
+        if (!join.trim()) return
+        setNote('加入中…')
+        api('/join', { method: 'POST', body: { code: join.trim() } })
+          .then(function () { setNote('已加入新空间'); setJoin(''); props.refresh() })
+          .catch(function (err) { setNote('加入失败：' + String(err.message || err)) })
+      }
+
+      const addBootstrap = function () {
+        if (!bootstrap.trim()) return
+        api('/peers/bootstrap', { method: 'POST', body: { address: bootstrap.trim() } })
+          .then(function () { setNote('已添加并尝试连接'); setBootstrap(''); props.refresh() })
+          .catch(function (err) { setNote(String(err.message || err)) })
+      }
+
+      const addRoot = function () {
+        if (!extraRoot.trim()) return
+        api('/workspaces/add', { method: 'POST', body: { path: extraRoot.trim() } })
+          .then(function () { setNote('已添加共享目录'); setExtraRoot(''); props.refresh() })
+          .catch(function (err) { setNote(String(err.message || err)) })
+      }
+
+      const loadAudit = function () {
+        api('/audit')
+          .then(function (body) { setAudit(body.events || []) })
+          .catch(function (err) { setNote(String(err.message || err)) })
+      }
+
+      const rows = (status && status.peers) || []
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+        note ? h('div', { style: { color: C.dim, fontSize: 12 } }, note) : null,
+        h(Section, { title: '本机' },
+          h('div', { style: Object.assign({}, S.card, { marginBottom: 10, color: C.dim, fontSize: 12 }) },
+            h('div', null, '节点 ID：' + ((status && status.identity && status.identity.nodeId) || '')),
+            h('div', { style: S.sub }, '空间：' + ((status && status.config && status.config.spaceId) || '')),
+            (status && status.network || []).map(function (row) {
+              return h('div', { key: row.address, style: S.mono }, row.url)
+            })
+          ),
+          h('div', { style: Object.assign({}, S.card, { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }) },
+            h(Field, { label: '设备名称' }, h('input', { value: form.nodeName || '', onChange: function (e) { set('nodeName', e.target.value) }, style: S.input })),
+            h(Field, { label: 'HTTP 端口' }, h('input', { type: 'number', value: form.port || '', onChange: function (e) { set('port', Number(e.target.value)) }, style: S.input })),
+            h(Field, { label: '发现端口' }, h('input', { type: 'number', value: form.discoveryPort || '', onChange: function (e) { set('discoveryPort', Number(e.target.value)) }, style: S.input })),
+            h(Field, { label: '同步间隔 ms' }, h('input', { type: 'number', value: form.syncIntervalMs || '', onChange: function (e) { set('syncIntervalMs', Number(e.target.value)) }, style: S.input }))
+          ),
+          h('div', { style: { marginTop: 10, display: 'flex', gap: 14, flexWrap: 'wrap' } },
+            h('label', { style: S.row }, h('input', { type: 'checkbox', checked: form.discovery === true, onChange: function (e) { set('discovery', e.target.checked) } }), h('span', null, '局域网发现')),
+            h('label', { style: S.row }, h('input', { type: 'checkbox', checked: form.allowRemoteRead === true, onChange: function (e) { set('allowRemoteRead', e.target.checked) } }), h('span', null, '允许信任设备浏览文件')),
+            h('label', { style: S.row }, h('input', { type: 'checkbox', checked: form.allowRemoteAi === true, onChange: function (e) { set('allowRemoteAi', e.target.checked) } }), h('span', null, '允许信任设备借用模型')),
+            h('label', { style: S.row }, h('input', { type: 'checkbox', checked: form.autoAcceptTransfers === true, onChange: function (e) { set('autoAcceptTransfers', e.target.checked) } }), h('span', null, '自动接收文件')),
+            h('label', { style: S.row }, h('input', { type: 'checkbox', checked: form.agentTools === true, onChange: function (e) { set('agentTools', e.target.checked) } }), h('span', null, '注册 AI 工具'))
+          ),
+          h('div', { style: { marginTop: 12 } }, h(Btn, { primary: true, onClick: save }, '保存设置')),
+          h('div', { style: Object.assign({}, S.sub, { marginTop: 8 }) },
+            '已注册 AI 工具：' + (((status && status.tools && status.tools.registered) || []).join(', ') || '无')
+          )
+        ),
+        h(Section, { title: '配对' },
+          h('div', { style: S.grid },
+            h('div', { style: S.card },
+              h('div', { style: { fontWeight: 600, marginBottom: 6 } }, '邀请另一台电脑'),
+              h('div', { style: Object.assign({}, S.note, { marginBottom: 8 }) }, '邀请码包含本机地址和空间密钥，请只发给可信的人。'),
+              h(Btn, { onClick: makeInvite }, '生成邀请码'),
+              invite ? h('div', { style: Object.assign({}, S.pre, { marginTop: 8, maxHeight: 90 }) }, invite) : null
+            ),
+            h('div', { style: S.card },
+              h('div', { style: { fontWeight: 600, marginBottom: 6 } }, '加入已有空间'),
+              h('textarea', { value: join, onChange: function (e) { setJoin(e.target.value) }, rows: 3, placeholder: '粘贴邀请码', style: Object.assign({}, S.input, { width: '100%', fontFamily: C.mono, resize: 'vertical' }) }),
+              h('div', { style: { marginTop: 8 } }, h(Btn, { primary: true, onClick: doJoin }, '加入'))
+            )
+          )
+        ),
+        h(Section, { title: '手动添加设备' },
+          h('div', { style: Object.assign({}, S.card, { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }) },
+            h(Field, { label: '地址' }, h('input', { value: bootstrap, onChange: function (e) { setBootstrap(e.target.value) }, placeholder: '192.168.1.20:47820', style: Object.assign({}, S.input, { minWidth: 220 }) })),
+            h(Btn, { onClick: addBootstrap }, '连接')
+          )
+        ),
+        h(Section, { title: '共享目录' },
+          h('div', { style: Object.assign({}, S.card, { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }) },
+            h(Field, { label: '额外目录' }, h('input', { value: extraRoot, onChange: function (e) { setExtraRoot(e.target.value) }, placeholder: 'D:\\work\\notes', style: Object.assign({}, S.input, { minWidth: 260 }) })),
+            h(Btn, { onClick: addRoot }, '共享')
+          ),
+          h('div', { style: { marginTop: 8, color: C.faint, fontSize: 11.5 } }, 'DSH 工作区会自动出现在列表中；这里用于添加工作区之外、你愿意局域网共享的目录。')
+        ),
+        h(Section, { title: '信任设备' },
+          rows.length
+            ? h('div', { style: S.col }, rows.map(function (peer) {
+              return h('div', { key: peer.nodeId, style: Object.assign({}, S.card, { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }) },
+                h(Dot, { tone: trustTone(peer.trust) }),
+                h('div', { style: { flex: 1, minWidth: 150 } },
+                  h('div', { style: { fontWeight: 600 } }, peer.name || peer.nodeId),
+                  h('div', { style: S.sub }, (peer.address || '无地址') + ' · ' + fmtTime(peer.lastSeenAt))
+                ),
+                h(Btn, { small: true, onClick: function () { api('/peers/trust', { method: 'POST', body: { nodeId: peer.nodeId, trust: 'trusted' } }).then(props.refresh).catch(function (err) { setNote(String(err.message || err)) }) } }, '信任'),
+                h(Btn, { small: true, danger: true, onClick: function () { api('/peers/trust', { method: 'POST', body: { nodeId: peer.nodeId, trust: 'blocked' } }).then(props.refresh).catch(function (err) { setNote(String(err.message || err)) }) } }, '阻止')
+              )
+            }))
+            : h(Empty, null, '暂无设备')
+        ),
+        h(Section, { title: '审计' },
+          h('div', { style: { marginBottom: 8 } }, h(Btn, { small: true, onClick: loadAudit }, '加载最近事件')),
+          audit.length
+            ? h('div', { style: Object.assign({}, S.pre, { maxHeight: 220 }) }, audit.map(function (row) {
+              return h('div', { key: row.at + row.action }, fmtTime(row.at) + '  ' + row.action + '  ' + JSON.stringify(row.detail || {}).slice(0, 160))
+            }))
+            : null
+        )
+      )
+    }
+
+    // ------------------------------------------------------------------ panel
+
+    const TABS = [
+      { key: 'home', label: '概览' },
+      { key: 'files', label: '文件' },
+      { key: 'conversations', label: '对话' },
+      { key: 'ai', label: 'AI' },
+      { key: 'settings', label: '设置' }
+    ]
+
+    function Panel() {
+      const { status, error, refresh } = useStatus()
+      const [tab, setTab] = useState('home')
+      const [target, setTarget] = useState('')
+      const [note, setNote] = useState('')
+
+      const approve = function (row) {
+        api('/transfers/approve', { method: 'POST', body: { id: row.id } })
+          .then(function () { setNote('已接收 ' + row.name); refresh() })
+          .catch(function (err) { setNote('接收失败：' + String(err.message || err)) })
+      }
+      const reject = function (row) {
+        api('/transfers/reject', { method: 'POST', body: { id: row.id } })
+          .then(function () { setNote('已拒绝 ' + row.name); refresh() })
+          .catch(function (err) { setNote(String(err.message || err)) })
+      }
+
+      const peerCount = (status && status.peers || []).filter(function (peer) { return peer.trust === 'trusted' }).length
+      const transportOk = status && status.transport && status.transport.listening
 
       return h(
         'div',
@@ -2138,28 +1372,24 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: S.header },
-          h(
-            'div',
-            { style: { display: 'flex', flexDirection: 'column', minWidth: 0 } },
-            h('div', { style: { fontWeight: 600, fontSize: 13.5 } }, '局域网共享'),
-            h(
-              'div',
-              { style: Object.assign({}, S.faint, { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 2 }) },
-              h('span', null, (status && status.identity && status.identity.machineName) || '本机'),
-              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
-                h('span', { style: Object.assign({}, S.dot, { background: role === 'hub' ? C.warn : hubOk ? C.ok : C.faint }) }),
-                linkLabel
-              ),
-              status
-                ? h('span', null, String((status.store && status.store.conversations) || 0) + ' 条会话')
-                : null
+          h(Glyph, { name: 'lan', size: 20, color: C.brand }),
+          h('div', { style: { minWidth: 0 } },
+            h('div', { style: S.title }, '局域网'),
+            h('div', { style: S.sub },
+              h(Dot, { tone: transportOk ? 'ok' : 'err' }),
+              h('span', null, transportOk ? peerCount + ' 台设备在线' : '服务未监听'),
+              status && status.config ? h('span', { style: S.mono }, status.config.spaceId) : null,
+              status && status.version ? h('span', null, 'v' + status.version) : null
             )
           ),
           h('div', { style: { flex: 1 } }),
-          note ? h('span', { style: S.faint, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, note) : null,
-          h(Btn, { primary: true, onClick: syncNow, disabled: syncing }, syncing ? '同步中…' : '立即同步')
+          note ? h('span', { style: { color: C.dim, fontSize: 11.5, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, note) : null,
+          h(Btn, { onClick: function () { api('/sync', { method: 'POST', body: {} }).then(function () { refresh() }).catch(function (err) { setNote(String(err.message || err)) }) } }, '同步')
         ),
-        error ? h('div', { style: Object.assign({}, S.err, { padding: '6px 14px' }) }, error) : null,
+        error ? h('div', { style: { color: C.err, padding: '6px 16px', fontSize: 12 } }, error) : null,
+        status && status.bootError
+          ? h('div', { style: { color: C.err, padding: '6px 16px', fontSize: 12 } }, '启动错误：' + status.bootError)
+          : null,
         h(
           'div',
           { style: S.tabs },
@@ -2169,9 +1399,7 @@ window.__ModuleLoader__.load({
               {
                 key: row.key,
                 type: 'button',
-                onClick: function () {
-                  setTab(row.key)
-                },
+                onClick: function () { setTab(row.key) },
                 style: Object.assign({}, S.tab, tab === row.key ? S.tabOn : null)
               },
               row.label
@@ -2181,26 +1409,51 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: S.body },
-          tab === 'conversations' ? h(ConversationsTab, { status, tick }) : null,
-          tab === 'plugins' ? h(PluginsTab, { status, tick }) : null,
-          tab === 'files' ? h(FilesTab, { status, tick }) : null,
-          tab === 'memory' ? h(MemoryTab, { status, tick }) : null,
-          tab === 'settings' ? h(SettingsTab, { status, tick, refresh }) : null
+          !status
+            ? h(Empty, null, '正在连接本机服务…')
+            : tab === 'home'
+              ? h(HomeTab, { status, refresh, setTab, setTarget, approve, reject })
+              : tab === 'files'
+                ? h(FilesTab, { status, target })
+                : tab === 'conversations'
+                  ? h(ConversationsTab, { status, target })
+                  : tab === 'ai'
+                    ? h(AiTab, { status })
+                    : h(SettingsTab, { status, refresh })
         )
       )
     }
 
-    // -------------------------------------------------------------- sidebar
+    // ------------------------------------------------------------------ glyph
 
     function Glyph(props) {
       const size = props.size || 20
-      return h(
-        'svg',
-        { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: props.color || C.dim, strokeWidth: 1.6, strokeLinecap: 'round' },
-        h('circle', { key: 'a', cx: 6, cy: 7, r: 2.4 }),
-        h('circle', { key: 'b', cx: 18, cy: 17, r: 2.4 }),
-        h('path', { key: 'l', d: 'M8.1 8.2 15.9 15.8' }),
-        h('path', { key: 'c', d: 'M12 3.5v3M3.5 12h3M17.5 12h3M12 17.5v3', opacity: 0.5 })
+      const color = props.color || C.dim
+      const name = props.name || 'lan'
+      const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: color, strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' }
+      if (name === 'folder') {
+        return h('svg', common, h('path', { key: 'f', d: 'M3.5 7.5h6l1.8 2.2h9.2v9.3h-17z' }))
+      }
+      if (name === 'file') {
+        return h('svg', common, h('path', { key: 'f', d: 'M6.5 3.5h7l4 4v13h-11z' }), h('path', { key: 'l', d: 'M13.5 3.5v4h4' }))
+      }
+      if (name === 'device') {
+        return h('svg', common,
+          h('rect', { key: 'r', x: 3.5, y: 4.5, width: 17, height: 11, rx: 1.5 }),
+          h('path', { key: 's', d: 'M8 19.5h8M12 15.5v4' })
+        )
+      }
+      if (name === 'chat') {
+        return h('svg', common, h('path', { key: 'c', d: 'M4 5.5h16v10.5h-8l-4 3v-3H4z' }))
+      }
+      if (name === 'code') {
+        return h('svg', common, h('path', { key: 'l', d: 'm8 8-4 4 4 4M16 8l4 4-4 4' }))
+      }
+      return h('svg', common,
+        h('circle', { key: 'a', cx: 6, cy: 7, r: 2.2 }),
+        h('circle', { key: 'b', cx: 18, cy: 17, r: 2.2 }),
+        h('circle', { key: 'c', cx: 6, cy: 17, r: 2.2 }),
+        h('path', { key: 'l', d: 'M8.1 8 15.8 15.8M8.1 16.2 15.8 8.2' })
       )
     }
 
@@ -2208,7 +1461,7 @@ window.__ModuleLoader__.load({
       return h(
         'span',
         { style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' } },
-        h(Glyph, { size: (props && props.size) || 20, color: C.text })
+        h(Glyph, { name: 'lan', size: (props && props.size) || 20, color: C.brand })
       )
     }
 
@@ -2219,8 +1472,9 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots'],
+      inject: ['slots', 'uiWorkspace', 'sessions'],
       apply(ctx) {
+        HOST = ctx
         try {
           ctx.slots.inject('sidebar.panellist', function () {
             return ctx.slots.register(
@@ -2236,14 +1490,14 @@ window.__ModuleLoader__.load({
             )
           })
         } catch (err) {
-          /* the host may not expose the sidebar slot */
+          /* host may not expose the sidebar slot */
         }
         try {
           ctx.slots.inject('main', function () {
             return ctx.slots.register({ name: 'main', key: 'lan' }, guarded(Panel))
           })
         } catch (err) {
-          /* the host may not expose the main slot */
+          /* host may not expose the main slot */
         }
       }
     }

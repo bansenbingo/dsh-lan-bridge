@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 #
-# dsh-lan-bridge 0.1.4 — macOS 更新脚本
+# dsh-lan-bridge 0.2.0 — macOS 安装脚本
 #
-#   1. unzip -o dsh-lan-bridge-0.1.4-macos.zip -d ~/Downloads/lan-bridge
+#   1. unzip -o dsh-lan-bridge-0.2.0-macos.zip -d ~/Downloads/lan-bridge
 #   2. bash ~/Downloads/lan-bridge/install-macos.sh
-#   3. 完全退出 DSH 再重新打开（不是刷新页面）
+#   3. 完全退出 DSH（Command+Q）再重新打开，不是刷新页面
 #
-# 它只做三件事：备份旧版本 → 覆盖插件文件 → 校验。不会碰
-# $DSH_HOME/lan-bridge/config.json（令牌、角色、端口都在那里）。
-
+# 它做四件事：备份旧版本 → 覆盖插件文件 → 注册 desktop profile → 校验语法。
+# 不会碰 ~/.dsh/lan-bridge/config.json（空间密钥、节点 ID 都在那里）。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$HERE/dsh-lan-bridge"
-
 DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
 PROFILE="${DSH_PROFILE:-desktop}"
 PROFILE_DIR="${DSH_PROFILE_DIR:-$DSH_HOME/profiles/$PROFILE}"
@@ -25,6 +23,7 @@ die() { printf '错误：%s\n' "$*" >&2; exit 1; }
 
 [ -d "$SRC" ] || die "找不到 dsh-lan-bridge 目录，请在解压出来的文件夹里运行本脚本"
 [ -d "$DSH_HOME" ] || die "找不到 $DSH_HOME，请确认 DSH 装过并至少启动过一次"
+[ -f "$PROFILE_DIR/package.json" ] || die "找不到 profile：$PROFILE_DIR/package.json"
 
 say "DSH_HOME     : $DSH_HOME"
 say "profile 目录 : $PROFILE_DIR"
@@ -43,9 +42,69 @@ fi
 # 2. 覆盖文件
 mkdir -p "$DEST"
 cp -R "$SRC/." "$DEST/"
-say "文件已更新到 0.1.4"
+say "文件已更新到 0.2.0"
 
-# 3. 校验
+# 3. 注册 profile（依赖 + bundle + node_modules 链接）
+register_with_node() {
+  node - "$PROFILE_DIR/package.json" "$DEST" <<'NODE'
+const fs = require('fs')
+const file = process.argv[2]
+const dest = process.argv[3]
+const pkg = JSON.parse(fs.readFileSync(file, 'utf8'))
+pkg.dependencies = pkg.dependencies || {}
+pkg.dependencies['dsh-lan-bridge'] = 'link:' + dest
+pkg.dsh = pkg.dsh || {}
+pkg.dsh.profile = pkg.dsh.profile || {}
+pkg.dsh.profile.bundles = pkg.dsh.profile.bundles || []
+if (!pkg.dsh.profile.bundles.includes('dsh-lan-bridge')) {
+  pkg.dsh.profile.bundles.push('dsh-lan-bridge')
+}
+fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n')
+console.log('profile 已注册 dsh-lan-bridge')
+NODE
+}
+
+register_with_perl() {
+  perl -MJSON::PP -e '
+    my ($file, $dest) = @ARGV;
+    open my $in, "<", $file or die "open: $!";
+    local $/;
+    my $pkg = decode_json(<$in>);
+    close $in;
+    $pkg->{dependencies} ||= {};
+    $pkg->{dependencies}{"dsh-lan-bridge"} = "link:$dest";
+    $pkg->{dsh} ||= {};
+    $pkg->{dsh}{profile} ||= {};
+    $pkg->{dsh}{profile}{bundles} ||= [];
+    my $found = 0;
+    for my $b (@{$pkg->{dsh}{profile}{bundles}}) { $found = 1 if $b eq "dsh-lan-bridge" }
+    push @{$pkg->{dsh}{profile}{bundles}}, "dsh-lan-bridge" unless $found;
+    open my $out, ">", $file or die "write: $!";
+    print $out JSON::PP->new->pretty->encode($pkg);
+    close $out;
+  ' "$PROFILE_DIR/package.json" "$DEST"
+  say "profile 已注册 dsh-lan-bridge（perl）"
+}
+
+cp "$PROFILE_DIR/package.json" "$PROFILE_DIR/package.json.bak.$STAMP"
+if command -v node >/dev/null 2>&1; then
+  register_with_node
+elif perl -MJSON::PP -e 1 >/dev/null 2>&1; then
+  register_with_perl
+else
+  say "警告：没有 node 或 perl，无法自动改 profile。请手动在 $PROFILE_DIR/package.json 中加入："
+  say '  "dependencies": { "dsh-lan-bridge": "link:'"$DEST"'" }'
+  say '  并在 "dsh.profile.bundles" 中加入 "dsh-lan-bridge"'
+fi
+
+mkdir -p "$PROFILE_DIR/node_modules"
+if [ -e "$PROFILE_DIR/node_modules/dsh-lan-bridge" ] && [ ! -L "$PROFILE_DIR/node_modules/dsh-lan-bridge" ]; then
+  mv "$PROFILE_DIR/node_modules/dsh-lan-bridge" "$PROFILE_DIR/node_modules/dsh-lan-bridge.bak.$STAMP"
+fi
+ln -sfn "$DEST" "$PROFILE_DIR/node_modules/dsh-lan-bridge"
+say "profile 链接已建立"
+
+# 4. 校验
 if command -v node >/dev/null 2>&1; then
   failed=0
   while IFS= read -r file; do
@@ -61,20 +120,6 @@ else
   say "没找到 node，跳过语法校验"
 fi
 
-# 4. 登记检查（只报告，不改你的 profile）
-if [ -f "$PROFILE_DIR/package.json" ]; then
-  if grep -q '"dsh-lan-bridge"' "$PROFILE_DIR/package.json"; then
-    say "profile 已登记 dsh-lan-bridge，无需重新安装依赖"
-  else
-    say ""
-    say "注意：$PROFILE_DIR/package.json 里没有 dsh-lan-bridge。"
-    say "首次安装需要两步："
-    say '  1) dependencies 里加 "dsh-lan-bridge": "link:'"$DEST"'"'
-    say '  2) dsh.profile.bundles 里加 "dsh-lan-bridge"'
-    say "  然后在 $PROFILE_DIR 执行 pnpm install --registry=https://registry.npmjs.org"
-  fi
-fi
-
 say ""
 say "完成。请完全退出 DSH（Command+Q）再重新打开，更新才会加载。"
-say "启动后：在侧边栏打开局域网面板 → 设置 → 点「局域网自动发现」，或直接填主机地址 → 测试连接。"
+say "启动后：侧边栏「局域网」→ 概览 → 邀请设备，或设置 → 加入已有空间。"

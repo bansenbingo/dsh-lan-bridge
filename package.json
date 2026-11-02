@@ -1,17 +1,21 @@
 {
   "name": "dsh-lan-bridge",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "private": true,
-  "description": "Share conversations, memory, plugin lists and workspace files between two DSH machines on the same LAN.",
+  "description": "Turn DSH into a decentralized LAN mesh: shared workspaces, AirDrop-style file transfer, remote conversations, and multi-machine model collaboration.",
   "keywords": [
     "dsh",
     "plugin",
     "lan",
-    "sync",
-    "sidebar"
+    "mesh",
+    "airdrop",
+    "collaboration"
   ],
   "type": "module",
   "main": "index.js",
+  "scripts": {
+    "test": "node test/v2-core.mjs && node test/v2-ai.mjs && node test/render-v2.mjs && node test/v2-host.mjs && node test/fork.mjs && node test/v2-e2e.mjs"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -35,7 +39,9 @@
       "platform": "web",
       "immediately": true,
       "inject": [
-        "slots"
+        "slots",
+        "uiWorkspace",
+        "sessions"
       ]
     }
   }
