@@ -46,7 +46,6 @@ const ReactFake = {
 await import('../client.js')
 assert(mod, 'client factory ran')
 assert(Array.isArray(mod.inject) && mod.inject.includes('slots'), 'client injects slots')
-assert(mod.inject.includes('uiWorkspace') && mod.inject.includes('sessions'), 'client injects native conversation services')
 
 mod.apply({
   slots: {

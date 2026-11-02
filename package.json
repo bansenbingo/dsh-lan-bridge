@@ -1,6 +1,6 @@
 {
   "name": "dsh-lan-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Turn DSH into a decentralized LAN mesh: shared workspaces, AirDrop-style file transfer, remote conversations, and multi-machine model collaboration.",
   "keywords": [
@@ -39,9 +39,7 @@
       "platform": "web",
       "immediately": true,
       "inject": [
-        "slots",
-        "uiWorkspace",
-        "sessions"
+        "slots"
       ]
     }
   }

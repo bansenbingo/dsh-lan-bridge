@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
-# dsh-lan-bridge 0.2.0 — macOS 安装脚本
+# dsh-lan-bridge 0.2.1 — macOS 安装脚本
 #
-#   1. unzip -o dsh-lan-bridge-0.2.0-macos.zip -d ~/Downloads/lan-bridge
+#   1. unzip -o dsh-lan-bridge-0.2.1-macos.zip -d ~/Downloads/lan-bridge
 #   2. bash ~/Downloads/lan-bridge/install-macos.sh
 #   3. 完全退出 DSH（Command+Q）再重新打开，不是刷新页面
 #
 # 它做四件事：备份旧版本 → 覆盖插件文件 → 注册 desktop profile → 校验语法。
 # 不会碰 ~/.dsh/lan-bridge/config.json（空间密钥、节点 ID 都在那里）。
+# 0.2.1 起不再把 uiWorkspace/sessions 写进客户端 inject，避免旧版 DSH 因缺少
+# 服务在启动时崩溃；宿主工具也改为 ctx.get('tools') 的可选访问。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,7 +44,7 @@ fi
 # 2. 覆盖文件
 mkdir -p "$DEST"
 cp -R "$SRC/." "$DEST/"
-say "文件已更新到 0.2.0"
+say "文件已更新到 0.2.1"
 
 # 3. 注册 profile（依赖 + bundle + node_modules 链接）
 register_with_node() {

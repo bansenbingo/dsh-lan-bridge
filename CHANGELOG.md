@@ -1,5 +1,16 @@
 # 更新记录
 
+## 0.2.1 — 2026-11-02
+
+macOS 兼容性补丁：0.2.0 在某些 Mac 版 DSH 上会因为客户端声明的可选服务不存在而在启动时抛 JavaScript 错误。
+
+### 修：旧版 DSH 启动崩溃
+
+- 客户端 `inject` 回到只声明 `slots`；`uiWorkspace` / `sessions` 改为运行时 `ctx.get(...)` 可选访问。缺少这些服务时，“在 DSH 中打开”降级为“已写入本机，请从侧栏打开”，面板和宿主照常启动。
+- 宿主 `inject` 回到只声明 `webServer`；`ctx.get('tools')` 作为可选访问。旧版 DSH 没有 tools 服务时只是不注册 AI 工具，不会拖垮插件启动。
+- `package.json` 的 `dsh.client.inject` 同步改回 `["slots"]`。
+- 安装脚本、zip、README 版本号更新到 0.2.1。
+
 ## 0.2.0 — 2026-11-02
 
 一次架构级重写：从「两台机器的 hub/peer」变成「每台机器都是节点的局域网 mesh」，并把面板改成设备中心。

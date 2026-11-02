@@ -1,3 +1,20 @@
+# 0.2.1 更新说明
+
+这是 macOS 兼容性补丁。0.2.0 在某些 Mac 版 DSH 上启动时可能报 JavaScript 错误：
+
+- 客户端不再把 `uiWorkspace` / `sessions` 写进 `inject`，改为运行时 `ctx.get(...)` 可选访问。缺少这些服务时，面板和宿主照常启动，“在 DSH 中打开”会降级为“已写入本机，请从侧栏打开”。
+- 宿主不再把 `tools` 写进 `inject`，改为 `ctx.get('tools')` 可选访问。旧版 DSH 没有 tools 服务时只是不注册 AI 工具。
+- 安装脚本、zip、README 版本号已更新到 0.2.1。
+
+如果 0.2.0 已经导致 DSH 无法启动：
+1. 把 `~/.dsh/plugins/dsh-lan-bridge` 临时改名为 `dsh-lan-bridge.disabled`；
+2. 用 `ls -t ~/.dsh/profiles/desktop/package.json.bak.* | head -1` 找到安装脚本备份的 profile，复制回 `package.json`；
+3. 重启 DSH，再安装 0.2.1。
+
+下面的 0.2.0 功能说明仍然适用。
+
+---
+
 # 0.2.0 更新说明
 
 0.2 是一次架构级重写：从“两台机器的 hub/peer”变成“每台机器都是节点的局域网 mesh”，面板也改成设备中心。

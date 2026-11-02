@@ -274,8 +274,19 @@ window.__ModuleLoader__.load({
     }
 
     async function hostOpenSession(sessionId) {
-      const workspace =
-        HOST && (HOST.uiWorkspace || (typeof HOST.get === 'function' ? HOST.get('uiWorkspace') : null))
+      let workspace = null
+      try {
+        workspace = HOST && typeof HOST.get === 'function' ? HOST.get('uiWorkspace') : null
+      } catch (err) {
+        workspace = null
+      }
+      if (!workspace) {
+        try {
+          workspace = HOST && HOST.uiWorkspace ? HOST.uiWorkspace : null
+        } catch (err) {
+          workspace = null
+        }
+      }
       if (!workspace || typeof workspace.openSession !== 'function') {
         return { ok: false, error: 'this DSH build does not expose uiWorkspace.openSession' }
       }
@@ -287,7 +298,19 @@ window.__ModuleLoader__.load({
         // Refresh the session list once and retry before falling back to the
         // sidebar hint.
         try {
-          const sessions = HOST.sessions || (typeof HOST.get === 'function' ? HOST.get('sessions') : null)
+          let sessions = null
+          try {
+            sessions = HOST && typeof HOST.get === 'function' ? HOST.get('sessions') : null
+          } catch (getError) {
+            sessions = null
+          }
+          if (!sessions) {
+            try {
+              sessions = HOST && HOST.sessions ? HOST.sessions : null
+            } catch (getError) {
+              sessions = null
+            }
+          }
           if (sessions && sessions.manager && typeof sessions.manager.refreshList === 'function') {
             await sessions.manager.refreshList()
             workspace.openSession(sessionId)
@@ -1472,7 +1495,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'uiWorkspace', 'sessions'],
+      inject: ['slots'],
       apply(ctx) {
         HOST = ctx
         try {

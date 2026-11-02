@@ -1,4 +1,4 @@
-# dsh-lan-bridge 0.2
+# dsh-lan-bridge 0.2.1
 
 把同一个局域网里的多台 DSH 连成**去中心化协作网**：每台电脑都是一个节点，不需要主机；可以互相浏览工作区、像 AirDrop 一样传文件、把另一台电脑的 AI 对话 fork 到本机原生会话里继续聊，也可以借用另一台电脑的模型做多机并行推理。
 
@@ -100,11 +100,11 @@ macOS / Linux 用系统 pnpm：`pnpm install --registry=https://registry.npmjs.o
 
 ### macOS 快速安装
 
-Windows 侧已经打好包：`dist/dsh-lan-bridge-0.2.0-macos.zip`（约 97 KB）。把它 AirDrop / U 盘 / `scp` 到 Mac，然后：
+Windows 侧已经打好包：`dist/dsh-lan-bridge-0.2.1-macos.zip`（约 97 KB）。把它 AirDrop / U 盘 / `scp` 到 Mac，然后：
 
 ```bash
 cd ~/Downloads
-unzip -o dsh-lan-bridge-0.2.0-macos.zip -d lan-bridge
+unzip -o dsh-lan-bridge-0.2.1-macos.zip -d lan-bridge
 bash lan-bridge/install-macos.sh
 ```
 

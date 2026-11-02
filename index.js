@@ -29,10 +29,10 @@ import { localAddresses, preferredAddress } from './lib/net.js'
 import { fail, isPreflight, pathOf, queryOf, readJson, sendJson, statusOfError } from './lib/http.js'
 
 export const name = 'dsh-lan-bridge'
-export const inject = ['webServer', 'tools']
+export const inject = ['webServer']
 
 const PREFIX = '/_dsh/lan'
-const VERSION = '0.2.0'
+const VERSION = '0.2.1'
 const EXPORT_DEBOUNCE_MS = 900
 
 const LAN = {
